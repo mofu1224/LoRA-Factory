@@ -72,7 +72,7 @@ uv run --frozen lora-factory inspect-model "D:\Models\base.safetensors"
 .\scripts\build_windows.ps1
 ```
 
-GitHub公開用の配布ビルドは、Microsoft DLLを同梱しない次のモードで作成します。
+GitHub公開用の配布ビルドは、Windowsの標準VC++ランタイムDLLを同梱しない次のモードで作成します。
 
 ```powershell
 .\scripts\build_windows.ps1 -SystemVcRuntime

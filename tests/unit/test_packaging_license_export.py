@@ -97,6 +97,8 @@ def test_windows_build_carries_external_runtime_inputs_and_license_export() -> N
     assert '"src" / "lora_factory" / "runtime_scripts" / "clip_embed.py"' in spec
     assert "lora_factory.packaging.license_export" in build_script
     assert "SystemVcRuntime" in build_script
+    assert "systemVcRuntimeNames" in build_script
+    assert "Where-Object { $_.Name -in $systemVcRuntimeNames }" in build_script
     assert "install_vcredist.ps1" in build_script
     assert "install_vcredist.cmd" in build_script
     assert "Microsoft.VCRedist.2015+.x64" in vcredist_script

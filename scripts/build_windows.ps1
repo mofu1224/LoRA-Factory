@@ -79,18 +79,27 @@ foreach ($requiredMaterial in @($qtMaterial, $msvcMaterial)) {
 }
 Copy-Item -LiteralPath $qtMaterial -Destination (Join-Path $licenseDirectory 'Qt') -Recurse
 Copy-Item -LiteralPath $msvcMaterial -Destination (Join-Path $licenseDirectory 'Microsoft-Visual-Cpp') -Recurse
+$systemVcRuntimeNames = @(
+    'VCRUNTIME140.dll'
+    'VCRUNTIME140_1.dll'
+    'MSVCP140.dll'
+    'MSVCP140_1.dll'
+    'MSVCP140_2.dll'
+    'CONCRT140.dll'
+    'VCOMP140.dll'
+)
 $msvcRuntimeFiles = @(Get-ChildItem -LiteralPath $appDirectory -Recurse -File |
-    Where-Object { $_.Name -match '^(VCRUNTIME|MSVCP|CONCRT|VCOMP).*\.dll$' })
+    Where-Object { $_.Name -in $systemVcRuntimeNames })
 if ($SystemVcRuntime) {
     foreach ($runtimeFile in $msvcRuntimeFiles) {
         Remove-Item -LiteralPath $runtimeFile.FullName -Force
     }
     $remainingMsvcFiles = @(Get-ChildItem -LiteralPath $appDirectory -Recurse -File |
-        Where-Object { $_.Name -match '^(VCRUNTIME|MSVCP|CONCRT|VCOMP).*\.dll$' })
+        Where-Object { $_.Name -in $systemVcRuntimeNames })
     if ($remainingMsvcFiles.Count -ne 0) {
         throw 'SystemVcRuntime mode still contains Microsoft runtime DLLs.'
     }
-    Write-Host 'SystemVcRuntime mode: Microsoft runtime DLLs are omitted; install the official x64 VC++ Redistributable before launch.'
+    Write-Host 'SystemVcRuntime mode: standard system VC++ runtime DLLs are omitted; install the official x64 VC++ Redistributable before launch.'
 }
 $lgplText = Join-Path $licenseDirectory 'Qt\LGPL-3.0-only.txt'
 $gplText = Join-Path $licenseDirectory 'Qt\GPL-3.0-only.txt'

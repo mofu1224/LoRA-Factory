@@ -62,7 +62,8 @@ The exact release-builder check and official links are in
 `licenses/Microsoft-Visual-Cpp/README.md`.
 
 The public v0.1 GitHub ZIP uses `SystemVcRuntime` mode and intentionally does not
-redistribute those Microsoft DLLs. Users can run the bundled `install_vcredist.cmd`,
+redistribute the standard system VC++ runtime DLLs. Package-private native dependencies
+shipped by scientific Python wheels remain when required by those packages. Users can run the bundled `install_vcredist.cmd`,
 which invokes WinGet for the official Microsoft Visual C++ x64 Redistributable (or its
 official signed installer fallback when WinGet is unavailable), before launching the
 app. A locally bundled self-use build is not a public redistribution
