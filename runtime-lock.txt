@@ -36,7 +36,7 @@ prodigyopt==1.1.2
 protobuf==7.35.1
 psutil==7.2.2
 pygments==2.20.0
-pytorch-optimizer==3.10.0
+pytorch-optimizer==3.10.1
 pyyaml==6.0.3
 regex==2026.7.19
 requests==2.34.2
