@@ -22,8 +22,8 @@ LoRA Factory は、Windows 11 向けのGUIツールです。
 - GitHub Release 版を展開する場合は、`LoRA Factory.exe` が入ったZIPを展開
 
 公開ZIPには`install_vcredist.cmd`を同梱しています。ダブルクリックすると
-WinGetから公式のMicrosoft x64ランタイムを導入します。WinGetがない場合は
-公式ダウンロードページを開きます。
+WinGetから公式のMicrosoft x64ランタイムを導入します。WinGetがない場合も、
+公式インストーラーを自動取得して署名を確認したうえでUAC経由で導入します。
 
 <https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170>
 
