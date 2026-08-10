@@ -15,7 +15,7 @@
 1. Confirm CI passes on `main`.
 2. Run the Windows release workflow manually once and test the downloaded artifact on a clean Windows account.
 3. Verify the ZIP SHA-256, launch `LoRA Factory.exe`, run Setup, and complete a Fake Backend project.
-4. Create an annotated semantic-version tag such as `v0.1.0` and push that tag.
+4. Create an annotated semantic-version tag such as `v0.1` and push that tag.
 5. The release workflow builds and attaches the Windows ZIP and SHA-256 file.
 6. Review release notes and verify all bundled licenses before marking the release public.
 
