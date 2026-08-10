@@ -11,7 +11,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Added bounded image enumeration, byte-size, dimension, and pixel-count checks before import and full decoding.
 - Removed local paths, original filenames, internal command arguments, and physical GPU UUIDs from final package metadata.
 
-## [0.1.0] - 2026-08-11
+## [v0.1] - 2026-08-11
 
 ### Added
 
