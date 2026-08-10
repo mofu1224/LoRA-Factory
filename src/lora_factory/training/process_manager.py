@@ -39,6 +39,27 @@ def _decode_log_line(raw: bytes) -> str:
             continue
     return raw.decode("utf-8", errors="replace")
 
+def _iter_log_lines(stream: BinaryIO):
+    pending = bytearray()
+    skip_lf = False
+    read_chunk = getattr(stream, "read1", None)
+    while True:
+        chunk = read_chunk(4096) if read_chunk is not None else stream.read(4096)
+        if not chunk:
+            break
+        for byte in chunk:
+            if skip_lf:
+                skip_lf = False
+                if byte == 10:
+                    continue
+            if byte in (10, 13):
+                yield _decode_log_line(bytes(pending) + b"\n")
+                pending.clear()
+                skip_lf = byte == 13
+            else:
+                pending.append(byte)
+    if pending:
+        yield _decode_log_line(bytes(pending))
 
 class ProcessManager:
     def run(
@@ -143,7 +164,7 @@ class ProcessManager:
         messages: queue.Queue[tuple[str, str] | None],
     ) -> None:
         if stream is not None:
-            for line in iter(stream.readline, b""):
-                messages.put((channel, _decode_log_line(line)))
+            for line in _iter_log_lines(stream):
+                messages.put((channel, line))
             stream.close()
         messages.put(None)
