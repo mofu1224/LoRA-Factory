@@ -29,7 +29,7 @@ Python、CUDA、PyTorch、sd-scripts、WD14、CLIPはアプリ本体に同梱せ
 
 ### 2) ZIPをダウンロードする
 
-GitHub Releasesから`LoRA Factory_v0.1.zip`をダウンロードします。ZIPはGitHub Releasesの公式ページから取得し、ダウンロード完了後に展開してください。
+GitHub Releasesからv0.1のWindows版ZIPをダウンロードします。ZIPはGitHub Releasesの公式ページから取得し、ダウンロード完了後に展開してください。
 
 ### 3) 展開してWindowsの前提ランタイムを導入する
 
