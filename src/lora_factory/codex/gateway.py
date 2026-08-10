@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import json
 import shutil
 import subprocess
@@ -74,6 +75,7 @@ class CodexGateway:
             errors="replace",
             timeout=10,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         return completed.stdout.strip() if completed.returncode == 0 else None
 

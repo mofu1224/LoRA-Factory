@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,7 @@ def _run_command(argv: tuple[str, ...], timeout: float) -> subprocess.CompletedP
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
 
 

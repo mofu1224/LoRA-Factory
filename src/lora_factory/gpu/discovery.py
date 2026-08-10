@@ -28,6 +28,7 @@ def _run_discovery(
         encoding="utf-8",
         errors="replace",
         timeout=timeout_seconds,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
 
 

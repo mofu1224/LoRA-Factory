@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import locale
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,6 +19,15 @@ class CodexProcessResult:
     timed_out: bool
     stdout: str
     stderr: str
+
+
+def _decode_process_output(raw: bytes) -> str:
+    for encoding in ("utf-8", "utf-8-sig", locale.getpreferredencoding(False), "cp932", "shift_jis"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
 
 
 def build_codex_arguments(
@@ -68,23 +78,22 @@ def run_codex_process(
         shell=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
         env=environment,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     timed_out = False
     try:
-        stdout, stderr = process.communicate(timeout=timeout_seconds)
+        raw_stdout, raw_stderr = process.communicate(timeout=timeout_seconds)
     except subprocess.TimeoutExpired:
         timed_out = True
         process.terminate()
         try:
-            stdout, stderr = process.communicate(timeout=5)
+            raw_stdout, raw_stderr = process.communicate(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
-            stdout, stderr = process.communicate()
+            raw_stdout, raw_stderr = process.communicate()
+    stdout = _decode_process_output(raw_stdout or b"")
+    stderr = _decode_process_output(raw_stderr or b"")
 
     safe_stdout = redact_text(stdout, home=home_for_redaction)
     safe_stderr = redact_text(stderr, home=home_for_redaction)
