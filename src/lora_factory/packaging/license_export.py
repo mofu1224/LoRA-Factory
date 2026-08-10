@@ -48,6 +48,8 @@ FACTORY_DISTRIBUTIONS = (
     "PyInstaller",
 )
 
+OPTIONAL_DISTRIBUTIONS = ("setuptools", "PyInstaller")
+
 _LICENSE_NAME = re.compile(
     r"^(?:licen[cs]e|copying|notice|copyright|authors?)(?:[._-].*)?$",
     re.IGNORECASE,
@@ -86,9 +88,11 @@ def export_license_bundle(
     *,
     distribution_names: Sequence[str] = FACTORY_DISTRIBUTIONS,
     python_license: Path | None = None,
+    optional_distributions: Sequence[str] = OPTIONAL_DISTRIBUTIONS,
 ) -> int:
     """Copy CPython and installed-distribution license material into a fresh directory."""
 
+    normalized_optionals = {name.casefold() for name in optional_distributions}
     output = output.resolve(strict=False)
     if output.exists():
         raise FileExistsError(f"License destination already exists: {output}")
@@ -104,6 +108,13 @@ def export_license_bundle(
         try:
             installed = distribution(requested_name)
         except PackageNotFoundError as exc:
+            if requested_name.casefold() in normalized_optionals:
+                print(
+                    f"Skipping optional build distribution: {requested_name} "
+                    "(not installed)",
+                    file=sys.stderr,
+                )
+                continue
             raise RuntimeError(
                 f"Required build distribution is not installed: {requested_name}"
             ) from exc
@@ -147,7 +158,11 @@ def export_license_bundle(
             license_count += 1
             copied += 1
         if license_count == 0:
-            raise RuntimeError(f"No license file was found for {name} {version}")
+            print(
+                f"Warning: no license files found for {name} {version}. "
+                "Only metadata was collected.",
+                file=sys.stderr,
+            )
 
     return copied
 
