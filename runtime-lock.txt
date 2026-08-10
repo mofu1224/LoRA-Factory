@@ -30,7 +30,7 @@ numpy==2.4.4
 onnxruntime-gpu==1.28.0
 opencv-python==4.10.0.84
 packaging==26.3
-pillow==12.2.0
+pillow==12.3.0
 prodigy-plus-schedule-free==1.9.2
 prodigyopt==1.1.2
 protobuf==7.35.1
