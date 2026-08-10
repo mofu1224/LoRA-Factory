@@ -48,7 +48,7 @@ setuptools==78.1.0
 sympy==1.14.0
 tensorboard==2.21.0
 tensorboard-data-server==0.7.2
-tokenizers==0.21.4
+tokenizers==0.23.1
 toml==0.10.2
 tqdm==4.70.0
 transformers==4.54.1
