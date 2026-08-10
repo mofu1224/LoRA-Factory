@@ -1,7 +1,9 @@
 # Microsoft Visual C++ runtime notice
 
 The public v0.1 Windows ZIP is built with `SystemVcRuntime` mode. It does not
-redistribute Microsoft Visual C++ runtime DLLs. Run the bundled
+redistribute the standard system Microsoft Visual C++ runtime DLLs. Package-private
+native dependencies from scientific Python wheels may still be present when required
+by those wheels. Run the bundled
 `install_vcredist.cmd` before launching the application. It invokes WinGet with
 the exact package ID `Microsoft.VCRedist.2015+.x64` and the official `winget`
 source. If WinGet is unavailable, it downloads Microsoft's official x64 installer,
