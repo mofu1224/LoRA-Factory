@@ -42,6 +42,10 @@ jobs:
       - name: Type check
         run: uv run mypy src
 
+      - name: Prepare test temp directory
+        shell: pwsh
+        run: New-Item -ItemType Directory -Path .test-tmp\ci -Force | Out-Null
+
       - name: Tests and coverage
         run: >-
           uv run pytest
