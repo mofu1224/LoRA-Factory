@@ -63,8 +63,9 @@ The exact release-builder check and official links are in
 
 The public v0.1 GitHub ZIP uses `SystemVcRuntime` mode and intentionally does not
 redistribute those Microsoft DLLs. Users can run the bundled `install_vcredist.cmd`,
-which invokes WinGet for the official Microsoft Visual C++ x64 Redistributable, before
-launching the app. A locally bundled self-use build is not a public redistribution
+which invokes WinGet for the official Microsoft Visual C++ x64 Redistributable (or its
+official signed installer fallback when WinGet is unavailable), before launching the
+app. A locally bundled self-use build is not a public redistribution
 unless the build operator has verified the applicable Microsoft redistribution rights.
 
 ### Bundled Python packages

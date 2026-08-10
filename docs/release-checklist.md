@@ -19,7 +19,7 @@
 5. The release workflow builds and attaches the Windows ZIP and SHA-256 file.
 6. Confirm the public build was created with `-SystemVcRuntime` and contains no MSVC DLLs.
 7. Confirm the exact Qt/PySide source archive and LGPL source-offer procedure recorded in `licenses/Qt/README.md` remain available.
-8. Confirm `install_vcredist.cmd` is in the ZIP and its WinGet fallback opens the official Microsoft x64 Redistributable page.
+8. Confirm `install_vcredist.cmd` is in the ZIP and its no-WinGet fallback downloads and verifies the official Microsoft x64 Redistributable installer.
 9. Review release notes and verify all bundled licenses before marking the release public.
 
 Real Backend validation additionally requires an authenticated Codex CLI, a compatible NVIDIA GPU, the managed runtime, a user-supplied compatible base model, and a non-private test dataset.

@@ -100,6 +100,9 @@ def test_windows_build_carries_external_runtime_inputs_and_license_export() -> N
     assert "install_vcredist.ps1" in build_script
     assert "install_vcredist.cmd" in build_script
     assert "Microsoft.VCRedist.2015+.x64" in vcredist_script
+    assert "https://aka.ms/vc14/vc_redist.x64.exe" in vcredist_script
+    assert "Get-AuthenticodeSignature" in vcredist_script
+    assert "Start-Process" in vcredist_script
     assert "--accept-package-agreements" in vcredist_script
     assert "--accept-source-agreements" in vcredist_script
     assert "CPython-*" in build_script

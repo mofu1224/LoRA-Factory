@@ -4,7 +4,8 @@ The public v0.1 Windows ZIP is built with `SystemVcRuntime` mode. It does not
 redistribute Microsoft Visual C++ runtime DLLs. Run the bundled
 `install_vcredist.cmd` before launching the application. It invokes WinGet with
 the exact package ID `Microsoft.VCRedist.2015+.x64` and the official `winget`
-source. If WinGet is unavailable, it opens Microsoft's official download page:
+source. If WinGet is unavailable, it downloads Microsoft's official x64 installer,
+checks its Authenticode signature, and runs it with UAC:
 
 - <https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170>
 
