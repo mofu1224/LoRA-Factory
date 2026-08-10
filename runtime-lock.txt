@@ -52,7 +52,7 @@ tokenizers==0.21.4
 toml==0.10.2
 tqdm==4.70.0
 transformers==4.54.1
-typing-extensions==4.15.0
+typing-extensions==4.16.0
 urllib3==2.7.0
 voluptuous==0.15.2
 wcwidth==0.8.2
