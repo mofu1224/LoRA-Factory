@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "profile_id": "sdxl-windows-cu130-2026.08",
+  "factory_python": "3.12.13",
+  "factory_python_license": "PSF-2.0",
+  "managed_python": "3.12.13",
+  "managed_python_license": "PSF-2.0",
+  "runtime_lock": {
+    "path": "runtime-lock.txt",
+    "sha256": "710baa17da9b875461ffbc198bff719ed9c13ab252336bcf329abc0fd338940d",
+    "platform": "win32",
+    "python": "3.12.13",
+    "package_count": 57,
+    "excluded": [
+      "torch",
+      "torchvision",
+      "sd-scripts"
+    ]
+  },
+  "sd_scripts": {
+    "repository": "https://github.com/kohya-ss/sd-scripts.git",
+    "release": "v0.11.1",
+    "commit": "6721028c79ee85a78b3a06dfd8954dae310a1cce",
+    "license": "Apache-2.0",
+    "training_entrypoint": "sdxl_train_network.py",
+    "sampling_entrypoint": "sdxl_gen_img.py"
+  },
+  "pytorch": {
+    "torch": "2.13.0",
+    "torchvision": "0.28.0",
+    "wheel_runtime": "cu130",
+    "index_url": "https://download.pytorch.org/whl/cu130",
+    "required_architecture": "sm_120",
+    "license": "BSD-3-Clause"
+  },
+  "onnxruntime_gpu": {
+    "version": "1.28.0",
+    "provider": "CUDAExecutionProvider",
+    "runtime_family": "CUDA 13 / cuDNN 9",
+    "license": "MIT"
+  },
+  "wd14": {
+    "model_id": "SmilingWolf/wd-eva02-large-tagger-v3",
+    "release": "v1.0",
+    "revision": "c5303bb7139430db980e4c680a778fe79d72b541",
+    "license": "Apache-2.0",
+    "input_size": 448,
+    "general_threshold": 0.35,
+    "character_threshold": 0.85,
+    "comparison": ">",
+    "artifacts": {
+      "model.onnx": {
+        "size_bytes": 1260435999,
+        "sha256": "9e768793060c7939b277ccb382783e8670e8a042d29d77aa736be0c8cc898bfc"
+      },
+      "model.safetensors": {
+        "size_bytes": 1260796004,
+        "sha256": "74f05b0aad869d9f91fbc597bc8d157d98abdead573d5c23509a195dbb8a7ef5"
+      },
+      "selected_tags.csv": {
+        "size_bytes": 308468,
+        "git_blob": "a2a653a5c89c8e387765eb1de9cfd2aedc92ee8d"
+      },
+      "config.json": {
+        "size_bytes": 634,
+        "git_blob": "52c4dcda90fbec1decdd6b18f6b1116549fa4c53"
+      }
+    }
+  },
+  "image_embedding": {
+    "model_id": "openai/clip-vit-large-patch14",
+    "revision": "32bd64288804d66eefd0ccbe215aa642df71cc41",
+    "license": "MIT",
+    "architecture": "CLIPVisionModelWithProjection",
+    "transformers_version": "4.54.1",
+    "image_size": 224,
+    "projection_dimension": 768,
+    "preprocessing": {
+      "resize": "shortest_edge_bicubic_then_center_crop",
+      "mean": [0.48145466, 0.4578275, 0.40821073],
+      "std": [0.26862954, 0.26130258, 0.27577711]
+    },
+    "artifacts": {
+      "config.json": {
+        "size_bytes": 4519,
+        "sha256": "8a09b467700c58138c29d53c605b34ebc69beaadd13274a8a2af8ad2c2f4032a"
+      },
+      "model.safetensors": {
+        "size_bytes": 1710540580,
+        "sha256": "a2bf730a0c7debf160f7a6b50b3aaf3703e7e88ac73de7a314903141db026dcb"
+      }
+    }
+  },
+  "validation": {
+    "status": "validated_local_windows_blackwell_2026-08-10",
+    "validated_gpu_models": [
+      "NVIDIA GeForce RTX 5080",
+      "NVIDIA GeForce RTX 5070 Ti"
+    ],
+    "validated_compute_capability": "sm_120",
+    "required_checks": [
+      "torch_cuda_available",
+      "sm_120_in_arch_list",
+      "cuda_tensor_matmul",
+      "bf16_matmul",
+      "onnx_cuda_provider",
+      "sdxl_train_network_import",
+      "clip_vision_embedding",
+      "tiny_sdxl_lora_training",
+      "sdxl_gen_img_sampling"
+    ]
+  }
+}

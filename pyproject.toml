@@ -1,0 +1,120 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lora-factory"
+version = "0.1.0"
+description = "Native Windows application for safe, reproducible SDXL LoRA creation"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "LoRA Factory contributors" }]
+requires-python = ">=3.12,<3.13"
+keywords = ["lora", "sdxl", "stable-diffusion", "windows", "pyside6"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Win32 (MS Windows)",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Microsoft :: Windows :: Windows 11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Multimedia :: Graphics",
+]
+dependencies = [
+  "alembic>=1.16,<2",
+  "imagehash>=4.3,<5",
+  "numpy>=2.1,<3",
+  "pillow>=11.3,<13",
+  "psutil>=7,<8",
+  "pydantic>=2.11,<3",
+  "pyside6>=6.9,<7",
+  "pyyaml>=6.0,<7",
+  "rich>=14,<15",
+  "safetensors>=0.5,<1",
+  "sqlalchemy>=2.0,<3",
+  "structlog>=25,<26",
+  "tomlkit>=0.13,<1",
+  "typer>=0.16,<1",
+]
+
+[project.urls]
+Homepage = "https://github.com/mofu1224/LoRA-Factory"
+Documentation = "https://github.com/mofu1224/LoRA-Factory/tree/main/docs"
+Issues = "https://github.com/mofu1224/LoRA-Factory/issues"
+Source = "https://github.com/mofu1224/LoRA-Factory"
+
+[project.optional-dependencies]
+tagger = [
+  "huggingface-hub>=0.34,<2",
+  "onnxruntime-gpu>=1.22,<2",
+]
+build = ["pyinstaller>=6.14,<7"]
+dev = [
+  "hypothesis>=6.136,<7",
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<9",
+  "pytest-cov>=6.2,<7",
+  "pytest-mock>=3.14,<4",
+  "pytest-qt>=4.5,<5",
+  "ruff>=0.12,<1",
+  "types-psutil>=7,<8",
+  "types-pyyaml>=6.0,<7",
+]
+
+[project.scripts]
+lora-factory = "lora_factory.cli:app"
+lora-factory-gui = "lora_factory.app:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lora_factory"]
+
+[tool.uv]
+package = true
+default-groups = ["dev"]
+
+[dependency-groups]
+dev = [
+  "hypothesis>=6.136,<7",
+  "mypy>=1.17,<2",
+  "pytest>=8.4,<9",
+  "pytest-cov>=6.2,<7",
+  "pytest-mock>=3.14,<4",
+  "pytest-qt>=4.5,<5",
+  "ruff>=0.12,<1",
+  "types-psutil>=7,<8",
+  "types-pyyaml>=6.0,<7",
+]
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+markers = [
+  "live_gpu: requires a working CUDA GPU runtime",
+  "live_codex: calls the installed authenticated Codex CLI",
+  "live_sd_scripts: requires the managed sd-scripts runtime and an SDXL checkpoint",
+]
+qt_api = "pyside6"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF", "S"]
+ignore = ["S101"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+packages = ["lora_factory"]
+mypy_path = "src"
+warn_unused_configs = true
+
+[tool.coverage.run]
+branch = true
+source = ["lora_factory"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = true

@@ -1,0 +1,18 @@
+version: 1
+prompts:
+  - id: portrait_subject
+    prompt: "{trigger}, portrait of a person"
+  - id: full_body_subject
+    prompt: "{trigger}, full body person, standing"
+  - id: landscape
+    prompt: "{trigger}, wide mountain landscape"
+  - id: object
+    prompt: "{trigger}, ceramic teapot on a table"
+  - id: indoor
+    prompt: "{trigger}, quiet library interior"
+  - id: outdoor
+    prompt: "{trigger}, garden in daylight"
+  - id: simple_composition
+    prompt: "{trigger}, one apple, simple background"
+  - id: complex_composition
+    prompt: "{trigger}, busy market, many objects and people"

@@ -1,0 +1,71 @@
+schema_version: 1
+preset: character
+caption:
+  min_confidence: 0.35
+  max_tags: 60
+  forbidden_categories:
+    - artist
+    - character
+    - copyright
+    - quality
+    - rating
+    - resolution
+    - text_watermark
+  keep_tokens: 2
+  class_token:
+    enabled: true
+    frequency_threshold: 0.70
+    mean_confidence_threshold: 0.55
+    ambiguity_margin: 0.10
+  invariant:
+    frequency_threshold: 0.85
+    mean_confidence_threshold: 0.60
+    max_conflict_ratio: 0.10
+    max_cluster_dominance: 0.35
+quality_gate:
+  hard_minimum: 8
+  warning_below: 20
+  max_near_duplicate_dominance: 0.50
+  max_dominant_character_ratio: 1.00
+  min_content_diversity: 0.00
+validation:
+  enabled_at: 24
+  ratio: 0.10
+  min_count: 2
+  max_count: 8
+  seed: 42
+training:
+  resolution_candidates: [1024, 896, 768]
+  network_dim: 32
+  network_alpha: 16
+  unet_lr: 0.0001
+  text_encoder_lr: 0.00001
+  optimizer_preference: [AdamW8bit, AdamW]
+  scheduler: constant
+  precision_preference: [bf16, fp16, fp32]
+  no_half_vae_for_fp16: true
+  sdpa: true
+  gradient_checkpointing: true
+  cache_latents: true
+  cache_text_encoder_outputs: false
+  shuffle_caption: true
+  enable_bucket: true
+  bucket_no_upscale: true
+  random_crop: false
+  flip_aug: false
+  color_aug: false
+  target_steps_min: 1000
+  target_steps_max: 2200
+  target_checkpoint_count: 8
+evaluation:
+  weights:
+    identity: 0.35
+    prompt_compliance: 0.20
+    flexibility: 0.15
+    consistency: 0.10
+    validation: 0.10
+    technical: 0.05
+    visual_heuristic: 0.05
+  overfit_penalty_weight: 0.20
+  screening_weight: 0.80
+  sweep_weights: [0.60, 0.70, 0.80, 0.90, 1.00]

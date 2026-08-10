@@ -1,0 +1,83 @@
+schema_version: 1
+categories:
+  person_class: [1girl, 1boy, woman, man, person, furry, animal]
+  count: [solo, 2girls, 2boys, multiple_girls, multiple_boys, group]
+  appearance:
+    - black_hair
+    - blonde_hair
+    - blue_hair
+    - brown_hair
+    - green_hair
+    - grey_hair
+    - orange_hair
+    - pink_hair
+    - purple_hair
+    - red_hair
+    - silver_hair
+    - white_hair
+    - aqua_hair
+    - black_eyes
+    - blue_eyes
+    - brown_eyes
+    - green_eyes
+    - grey_eyes
+    - orange_eyes
+    - pink_eyes
+    - purple_eyes
+    - red_eyes
+    - yellow_eyes
+    - long_hair
+    - short_hair
+    - medium_hair
+    - twintails
+    - ponytail
+    - braid
+  species: [animal_ears, cat_ears, dog_ears, fox_ears, rabbit_ears, tail, wings, horns]
+  permanent_accessory: [halo, facial_mark, eyepatch]
+  clothing:
+    - dress
+    - white_dress
+    - shirt
+    - t-shirt
+    - jacket
+    - coat
+    - skirt
+    - pants
+    - shorts
+    - school_uniform
+    - sailor_collar
+    - swimsuit
+    - armor
+    - kimono
+    - maid
+    - gloves
+    - thighhighs
+    - footwear
+  temporary_accessory: [hat, cap, beret, hair_ornament, hairclip, necklace, earrings, bracelet]
+  expression: [smile, smiling, grin, open_mouth, closed_mouth, blush, angry, sad, crying]
+  pose: [standing, sitting, kneeling, lying, walking, running, arms_up, crossed_arms]
+  view: [looking_at_viewer, looking_away, from_above, from_below, from_side, back]
+  composition: [portrait, upper_body, full_body, cowboy_shot, close-up, dutch_angle]
+  background: [simple_background, white_background, black_background, outdoors, indoors, classroom, city, forest, sky]
+  lighting: [day, night, sunset, backlighting, dramatic_lighting, soft_lighting]
+  object: [weapon, sword, gun, book, phone, cup, food, flower, vehicle]
+  style: [anime_coloring, sketch, watercolor, oil_painting, monochrome, lineart, pixel_art]
+  artist: []
+  character: []
+  copyright: []
+  quality: [masterpiece, best_quality, high_quality, great_quality, normal_quality, low_quality, worst_quality]
+  rating: [rating_safe, rating_questionable, rating_explicit, safe, sensitive, questionable, explicit]
+  resolution: [highres, absurdres, incredibly_absurdres, lowres]
+  text_watermark: [text, watermark, signature, logo, username]
+synonyms:
+  gray_hair: grey_hair
+  gray_eyes: grey_eyes
+  smiling: smile
+  t-shirt: tshirt
+conflicts:
+  1girl: [1boy, man]
+  1boy: [1girl, woman]
+  black_hair: [blonde_hair, blue_hair, brown_hair, green_hair, pink_hair, purple_hair, red_hair, white_hair]
+  blonde_hair: [black_hair, blue_hair, brown_hair, green_hair, pink_hair, purple_hair, red_hair, white_hair]
+  blue_hair: [black_hair, blonde_hair, brown_hair, green_hair, pink_hair, purple_hair, red_hair, white_hair]
+  white_hair: [black_hair, blonde_hair, blue_hair, brown_hair, green_hair, pink_hair, purple_hair, red_hair]

@@ -1,0 +1,1 @@
+{"additionalProperties":false,"properties":{"approved":{"type":"boolean"},"warnings":{"items":{"type":"string"},"type":"array"},"reason_summary":{"type":"string"},"confidence":{"maximum":1,"minimum":0,"type":"number"}},"required":["approved","warnings","reason_summary","confidence"],"type":"object"}

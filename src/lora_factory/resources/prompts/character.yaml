@@ -1,0 +1,18 @@
+version: 1
+prompts:
+  - id: identity_portrait
+    prompt: "{trigger}, portrait, looking at viewer, neutral background"
+  - id: upper_body
+    prompt: "{trigger}, upper body, natural expression"
+  - id: full_body
+    prompt: "{trigger}, full body, standing"
+  - id: expression_change
+    prompt: "{trigger}, smiling, close-up"
+  - id: outfit_change
+    prompt: "{trigger}, casual outfit, city street"
+  - id: background_change
+    prompt: "{trigger}, outdoors, mountain landscape"
+  - id: view_change
+    prompt: "{trigger}, side view, upper body"
+  - id: dynamic_pose
+    prompt: "{trigger}, dynamic pose, full body"
