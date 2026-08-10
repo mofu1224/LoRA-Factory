@@ -110,8 +110,7 @@ def export_license_bundle(
         except PackageNotFoundError as exc:
             if requested_name.casefold() in normalized_optionals:
                 print(
-                    f"Skipping optional build distribution: {requested_name} "
-                    "(not installed)",
+                    f"Skipping optional build distribution: {requested_name} (not installed)",
                     file=sys.stderr,
                 )
                 continue
