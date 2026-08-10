@@ -64,6 +64,21 @@ $pythonLicense = Get-ChildItem -LiteralPath $licenseDirectory -Recurse -File -Fi
 if ($null -eq $pythonLicense) {
     throw 'The packaged license bundle does not contain the CPython license.'
 }
+$qtMaterial = Join-Path $repoRoot 'licenses\Qt'
+$msvcMaterial = Join-Path $repoRoot 'licenses\Microsoft-Visual-Cpp'
+foreach ($requiredMaterial in @($qtMaterial, $msvcMaterial)) {
+    if (-not (Test-Path -LiteralPath $requiredMaterial -PathType Container)) {
+        throw "Required distribution license material is missing: $requiredMaterial"
+    }
+}
+Copy-Item -LiteralPath $qtMaterial -Destination (Join-Path $licenseDirectory 'Qt') -Recurse
+Copy-Item -LiteralPath $msvcMaterial -Destination (Join-Path $licenseDirectory 'Microsoft-Visual-Cpp') -Recurse
+$lgplText = Join-Path $licenseDirectory 'Qt\LGPL-3.0-only.txt'
+$gplText = Join-Path $licenseDirectory 'Qt\GPL-3.0-only.txt'
+if (-not (Test-Path -LiteralPath $lgplText -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $gplText -PathType Leaf)) {
+    throw 'The packaged Qt license bundle is incomplete.'
+}
 $digest = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash
 Write-Host "Windows build: $appDirectory"
 Write-Host "Executable SHA256: $digest"

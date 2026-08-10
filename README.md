@@ -66,7 +66,8 @@ uv run --frozen lora-factory inspect-model "D:\Models\base.safetensors"
 ```
 
 `dist\windows-<timestamp>\LoRA Factory\` に one-dir 版を出力します。  
-`license/notice` は同梱され、配布時のライセンス監査に対応しています。
+`licenses\`、QtのLGPL/GPL全文、Qt配布手順、Microsoft Visual C++ランタイム通知を
+同梱します。配布前に `THIRD_PARTY_NOTICES.md` と `licenses\` を確認してください。
 
 ---
 
@@ -79,3 +80,6 @@ uv run --frozen lora-factory inspect-model "D:\Models\base.safetensors"
 ## ライセンス
 
 本体は [MIT License](./LICENSE) です。
+
+PySide6/Qt、CPython、PyInstaller、各Pythonパッケージ、Microsoft Visual C++ランタイム、
+CUDA、モデル、ユーザーが選択するベースモデルはそれぞれの条件に従います。
