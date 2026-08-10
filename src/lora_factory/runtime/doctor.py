@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -110,6 +111,7 @@ def _run_probe(
         encoding="utf-8",
         errors="replace",
         timeout=timeout_seconds,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
 
 

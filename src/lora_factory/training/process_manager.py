@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import os
 import queue
+import locale
 import subprocess
 import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TextIO
+from typing import BinaryIO
 
 from lora_factory.core.cancellation import CancellationToken
 from lora_factory.util.redaction import redact_text
@@ -27,6 +28,16 @@ class ManagedProcessResult:
 
 
 LineCallback = Callable[[str, str], None]
+
+
+def _decode_log_line(raw: bytes) -> str:
+    encodings = ("utf-8", "utf-8-sig", locale.getpreferredencoding(False), "cp932", "shift_jis")
+    for encoding in encodings:
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
 
 
 class ProcessManager:
@@ -57,9 +68,6 @@ class ProcessManager:
             shell=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         messages: queue.Queue[tuple[str, str] | None] = queue.Queue()
@@ -131,11 +139,11 @@ class ProcessManager:
     @staticmethod
     def _read_stream(
         channel: str,
-        stream: TextIO | None,
+        stream: BinaryIO | None,
         messages: queue.Queue[tuple[str, str] | None],
     ) -> None:
         if stream is not None:
-            for line in iter(stream.readline, ""):
-                messages.put((channel, line))
+            for line in iter(stream.readline, b""):
+                messages.put((channel, _decode_log_line(line)))
             stream.close()
         messages.put(None)

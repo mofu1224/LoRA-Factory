@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import os
 import subprocess
 from collections.abc import Callable, Sequence
 from io import StringIO
@@ -27,6 +28,7 @@ def _run_telemetry(
         encoding="utf-8",
         errors="replace",
         timeout=timeout_seconds,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
 
 
