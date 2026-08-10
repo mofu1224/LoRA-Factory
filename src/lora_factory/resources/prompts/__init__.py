@@ -1,0 +1,1 @@
+"""Preset benchmark prompt resources."""

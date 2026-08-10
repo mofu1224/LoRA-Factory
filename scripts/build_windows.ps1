@@ -1,0 +1,70 @@
+[CmdletBinding()]
+param(
+    [string]$BuildLabel = (Get-Date -Format 'yyyyMMdd-HHmmss')
+)
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+if ($BuildLabel -notmatch '^[0-9A-Za-z._-]+$') {
+    throw 'BuildLabel may contain only letters, digits, dot, underscore, and hyphen.'
+}
+
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+$uvCommand = Get-Command uv -ErrorAction SilentlyContinue
+if ($null -eq $uvCommand) {
+    throw 'uv was not found on PATH.'
+}
+$distRoot = Join-Path $repoRoot "dist\windows-$BuildLabel"
+$workRoot = Join-Path $repoRoot "build\pyinstaller-$BuildLabel"
+if (Test-Path -LiteralPath $distRoot) {
+    throw "Build destination already exists; refusing overwrite: $distRoot"
+}
+if (Test-Path -LiteralPath $workRoot) {
+    throw "Build work directory already exists; refusing overwrite: $workRoot"
+}
+
+Push-Location $repoRoot
+try {
+    & $uvCommand.Source sync --frozen --extra build
+    if ($LASTEXITCODE -ne 0) {
+        throw "uv sync failed with exit code $LASTEXITCODE"
+    }
+    & $uvCommand.Source run --frozen --extra build pyinstaller `
+        --noconfirm `
+        --clean `
+        --distpath $distRoot `
+        --workpath $workRoot `
+        packaging\lora_factory.spec
+    if ($LASTEXITCODE -ne 0) {
+        throw "PyInstaller failed with exit code $LASTEXITCODE"
+    }
+}
+finally {
+    Pop-Location
+}
+
+$appDirectory = Join-Path $distRoot 'LoRA Factory'
+$executable = Join-Path $appDirectory 'LoRA Factory.exe'
+if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
+    throw "Build completed without the expected executable: $executable"
+}
+Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $appDirectory
+Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $appDirectory
+Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination $appDirectory
+$licenseDirectory = Join-Path $appDirectory 'licenses'
+& $uvCommand.Source run --frozen --extra build python -m lora_factory.packaging.license_export `
+    --output $licenseDirectory
+if ($LASTEXITCODE -ne 0) {
+    throw "Third-party license export failed with exit code $LASTEXITCODE"
+}
+$pythonLicense = Get-ChildItem -LiteralPath $licenseDirectory -Recurse -File -Filter 'LICENSE.txt' |
+    Where-Object { $_.Directory.Name -like 'CPython-*' } |
+    Select-Object -First 1
+if ($null -eq $pythonLicense) {
+    throw 'The packaged license bundle does not contain the CPython license.'
+}
+$digest = (Get-FileHash -LiteralPath $executable -Algorithm SHA256).Hash
+Write-Host "Windows build: $appDirectory"
+Write-Host "Executable SHA256: $digest"
+Write-Host 'The separately installed managed CUDA runtime is intentionally not embedded.'

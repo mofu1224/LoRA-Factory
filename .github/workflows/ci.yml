@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows-quality:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      UV_CACHE_DIR: .uv-cache/ci
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        run: python -m pip install uv==0.11.17
+
+      - name: Sync locked environment
+        run: uv sync --frozen
+
+      - name: Verify lock file
+        run: uv lock --check
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type check
+        run: uv run mypy src
+
+      - name: Tests and coverage
+        run: >-
+          uv run pytest
+          --basetemp .test-tmp/ci
+          --cov=lora_factory
+          --cov-branch
+          --cov-report=term
+          --cov-report=xml
+
+      - name: Fake end-to-end smoke
+        run: >-
+          uv run --frozen lora-factory fake-e2e
+          --preset character
+          --image-count 8
+          --json
+
+      - name: Build source and wheel distributions
+        run: uv build
