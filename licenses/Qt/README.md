@@ -10,6 +10,16 @@ contains the following license texts:
 - `LGPL-3.0-only.txt`: the LGPL terms used for the Qt open-source route.
 - `GPL-3.0-only.txt`: the GPL terms incorporated by the LGPL text.
 
+For this v0.1 build, the exact corresponding upstream source archives are:
+
+- PySide6/Shiboken6 6.11.1 source: <https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.11.1-src/pyside-setup-everywhere-src-6.11.1.tar.xz>
+- Qt 6.11.1 source: <https://download.qt.io/official_releases/qt/6.11/6.11.1/single/qt-everywhere-src-6.11.1.zip>
+
+Keep these source links, or an equivalent written source offer and the
+corresponding source archive, available for every binary release. The source
+archive is not copied into the Windows ZIP because it is large; the release
+record must preserve the exact version and source location used for the build.
+
 The v0.1 GUI imports only QtCore, QtGui, QtNetwork, and QtWidgets. The
 PyInstaller specification explicitly excludes unused Qt PDF, QML, Quick, and
 Virtual Keyboard modules and their native plugins. This matters because Qt
