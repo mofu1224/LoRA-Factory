@@ -61,6 +61,12 @@ Studio redistributable terms; the LoRA Factory license does not replace those te
 The exact release-builder check and official links are in
 `licenses/Microsoft-Visual-Cpp/README.md`.
 
+The public v0.1 GitHub ZIP uses `SystemVcRuntime` mode and intentionally does not
+redistribute those Microsoft DLLs. Users must install the official Microsoft Visual C++
+x64 Redistributable separately before launching it. A locally bundled self-use build is
+not a public redistribution unless the build operator has verified the applicable
+Microsoft redistribution rights.
+
 ### Bundled Python packages
 
 The GUI build includes the following direct packages and the transitive packages selected

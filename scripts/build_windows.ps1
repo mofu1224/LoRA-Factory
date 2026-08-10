@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$BuildLabel = (Get-Date -Format 'yyyyMMdd-HHmmss')
+    [string]$BuildLabel = (Get-Date -Format 'yyyyMMdd-HHmmss'),
+    [switch]$SystemVcRuntime
 )
 
 $ErrorActionPreference = 'Stop'
@@ -14,6 +15,9 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $uvCommand = Get-Command uv -ErrorAction SilentlyContinue
 if ($null -eq $uvCommand) {
     throw 'uv was not found on PATH.'
+}
+if ([string]::IsNullOrWhiteSpace($env:UV_CACHE_DIR)) {
+    $env:UV_CACHE_DIR = Join-Path $repoRoot '.uv-cache-build'
 }
 $distRoot = Join-Path $repoRoot "dist\windows-$BuildLabel"
 $workRoot = Join-Path $repoRoot "build\pyinstaller-$BuildLabel"
@@ -73,6 +77,19 @@ foreach ($requiredMaterial in @($qtMaterial, $msvcMaterial)) {
 }
 Copy-Item -LiteralPath $qtMaterial -Destination (Join-Path $licenseDirectory 'Qt') -Recurse
 Copy-Item -LiteralPath $msvcMaterial -Destination (Join-Path $licenseDirectory 'Microsoft-Visual-Cpp') -Recurse
+$msvcRuntimeFiles = @(Get-ChildItem -LiteralPath $appDirectory -Recurse -File |
+    Where-Object { $_.Name -match '^(VCRUNTIME|MSVCP|CONCRT|VCOMP).*\.dll$' })
+if ($SystemVcRuntime) {
+    foreach ($runtimeFile in $msvcRuntimeFiles) {
+        Remove-Item -LiteralPath $runtimeFile.FullName -Force
+    }
+    $remainingMsvcFiles = @(Get-ChildItem -LiteralPath $appDirectory -Recurse -File |
+        Where-Object { $_.Name -match '^(VCRUNTIME|MSVCP|CONCRT|VCOMP).*\.dll$' })
+    if ($remainingMsvcFiles.Count -ne 0) {
+        throw 'SystemVcRuntime mode still contains Microsoft runtime DLLs.'
+    }
+    Write-Host 'SystemVcRuntime mode: Microsoft runtime DLLs are omitted; install the official x64 VC++ Redistributable before launch.'
+}
 $lgplText = Join-Path $licenseDirectory 'Qt\LGPL-3.0-only.txt'
 $gplText = Join-Path $licenseDirectory 'Qt\GPL-3.0-only.txt'
 if (-not (Test-Path -LiteralPath $lgplText -PathType Leaf) -or

@@ -32,7 +32,7 @@ jobs:
         shell: pwsh
         run: |
           $label = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME } else { "manual-$env:GITHUB_RUN_NUMBER" }
-          .\scripts\build_windows.ps1 -BuildLabel $label
+          .\scripts\build_windows.ps1 -BuildLabel $label -SystemVcRuntime
           $archive = "dist\LoRA Factory_$label-windows-x64.zip"
           Compress-Archive -LiteralPath "dist\windows-$label\LoRA Factory" -DestinationPath $archive
           $hashFile = "$archive.sha256"

@@ -1,6 +1,17 @@
 # Microsoft Visual C++ runtime notice
 
-The Windows ZIP may contain Microsoft Visual C++ runtime DLLs required by
+The public v0.1 Windows ZIP is built with `SystemVcRuntime` mode. It does not
+redistribute Microsoft Visual C++ runtime DLLs. Before launching that ZIP,
+install the official Microsoft Visual C++ x64 Redistributable:
+
+- <https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170>
+
+The self-use build may include local copies of these DLLs when the build
+operator has verified the applicable Visual Studio/Build Tools redistribution
+rights. That self-use mode must not be used for a public release without that
+verification.
+
+Some locally bundled builds may contain Microsoft Visual C++ runtime DLLs required by
 CPython and native extension modules, including `VCRUNTIME140*.dll` and
 `MSVCP140*.dll`.
 

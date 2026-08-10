@@ -18,7 +18,13 @@ LoRA Factory は、Windows 11 向けのGUIツールです。
 - NVIDIA GPU（学習時）
 - SDXL/Illustrious 互換 `.safetensors` ベースモデル
 - Codex CLI が使える ChatGPT アカウント（任意）
+- Microsoft Visual C++ x64 Redistributable（公開ZIPの起動前に導入）
 - GitHub Release 版を展開する場合は、`LoRA Factory.exe` が入ったZIPを展開
+
+Microsoft公式のx64ランタイムは以下から入手してください。公開ZIPには
+MicrosoftのランタイムDLLを同梱していません。
+
+<https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170>
 
 ### 2) GUI起動
 1. `LoRA Factory.exe` を起動
@@ -63,6 +69,12 @@ uv run --frozen lora-factory inspect-model "D:\Models\base.safetensors"
 
 ```powershell
 .\scripts\build_windows.ps1
+```
+
+GitHub公開用の配布ビルドは、Microsoft DLLを同梱しない次のモードで作成します。
+
+```powershell
+.\scripts\build_windows.ps1 -SystemVcRuntime
 ```
 
 `dist\windows-<timestamp>\LoRA Factory\` に one-dir 版を出力します。  
