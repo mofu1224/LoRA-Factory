@@ -38,6 +38,8 @@ def _is_ignored(path: str) -> bool:
         ".agent/local.json",
         ".agents/cache.json",
         ".ipynb_checkpoints/notebook.ipynb",
+        ".pytest_cache-audit/v/cache/nodeids",
+        ".pytest_cache-qt-spec/v/cache/nodeids",
         ".uv-cache-publication/archive-v0/package.whl",
         "data/train.png",
         "private-session/source.webp",
