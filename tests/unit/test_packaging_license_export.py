@@ -36,23 +36,20 @@ def test_license_export_refuses_to_overwrite_existing_bundle(tmp_path: Path) -> 
         export_license_bundle(output, distribution_names=())
 
 
-def test_license_export_skips_optional_missing_distributions(
-    tmp_path, capsys, monkeypatch
-) -> None:
+def test_license_export_skips_optional_missing_distributions(tmp_path, capsys, monkeypatch) -> None:
     output = tmp_path / "licenses"
     python_license = tmp_path / "python-license.txt"
     python_license.write_text("PSF test license", encoding="utf-8")
 
-    from importlib.metadata import PackageNotFoundError, distribution as original_distribution
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import distribution as original_distribution
 
     def fake_distribution(name: str):
         if name == "setuptools":
             raise PackageNotFoundError(name)
         return original_distribution(name)
 
-    monkeypatch.setattr(
-        "lora_factory.packaging.license_export.distribution", fake_distribution
-    )
+    monkeypatch.setattr("lora_factory.packaging.license_export.distribution", fake_distribution)
 
     copied = export_license_bundle(
         output,
