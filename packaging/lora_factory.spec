@@ -8,6 +8,41 @@ from PyInstaller.utils.hooks import collect_data_files
 ROOT = Path(SPECPATH).parent
 PACKAGE_ROOT = ROOT / "src"
 
+# The application imports only QtCore, QtGui, QtNetwork, and QtWidgets. Keep
+# optional Qt modules out of the one-dir distribution so unused GPL-only
+# modules and their third-party payloads are not accidentally redistributed.
+UNUSED_QT_MODULES = [
+    "PySide6.QtPdf",
+    "PySide6.QtPdfQuick",
+    "PySide6.QtPdfWidgets",
+    "PySide6.QtQml",
+    "PySide6.QtQuick",
+    "PySide6.QtVirtualKeyboard",
+    "PySide6.QtVirtualKeyboardQml",
+    "PySide6.QtVirtualKeyboardSettings",
+]
+
+
+def without_unused_qt_artifacts(toc):
+    """Remove native modules/plugins pulled by PySide6 hooks but not used here."""
+
+    def keep(entry):
+        filename = Path(str(entry[0]).replace("\\", "/")).name.lower()
+        if filename in {"qpdf.dll", "qtvirtualkeyboardplugin.dll"}:
+            return False
+        return not (
+            filename.startswith("qt6pdf")
+            or filename.startswith("qt6qml")
+            or filename.startswith("qt6quick")
+            or filename.startswith("qt6virtualkeyboard")
+            or filename.startswith("qtpdf")
+            or filename.startswith("qtqml")
+            or filename.startswith("qtquick")
+            or filename.startswith("qtvirtualkeyboard")
+        )
+
+    return [entry for entry in toc if keep(entry)]
+
 datas = [
     (str(ROOT / "backend-manifest.json"), "."),
     (str(ROOT / "runtime-lock.txt"), "."),
@@ -46,10 +81,13 @@ a = Analysis(
         "ruff",
         "torch",
         "torchvision",
+        *UNUSED_QT_MODULES,
     ],
     noarchive=False,
     optimize=1,
 )
+a.binaries = without_unused_qt_artifacts(a.binaries)
+a.datas = without_unused_qt_artifacts(a.datas)
 pyz = PYZ(a.pure)
 
 exe = EXE(

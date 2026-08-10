@@ -96,4 +96,11 @@ def test_windows_build_carries_external_runtime_inputs_and_license_export() -> N
     assert '"src" / "lora_factory" / "runtime_scripts" / "clip_embed.py"' in spec
     assert "lora_factory.packaging.license_export" in build_script
     assert "CPython-*" in build_script
+    assert "licenses\\Qt" in build_script
+    assert "licenses\\Microsoft-Visual-Cpp" in build_script
+    assert "LGPL-3.0-only.txt" in build_script
     assert "Build work directory already exists; refusing overwrite" in build_script
+    assert '"PySide6.QtVirtualKeyboard"' in spec
+    assert '"PySide6.QtPdf"' in spec
+    assert 'filename.startswith("qt6virtualkeyboard")' in spec
+    assert 'filename.startswith("qt6pdf")' in spec

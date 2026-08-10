@@ -25,13 +25,23 @@ by PyInstaller.
 
 - Source and licensing overview: <https://doc.qt.io/qtforpython-6/>
 - Qt open-source obligations: <https://www.qt.io/development/open-source-lgpl-obligations>
-- Resolved version: recorded in `uv.lock` and the generated license bundle
-- Available licenses: LGPL-3.0-only, GPL-3.0-only, or applicable Qt commercial terms
+- Resolved version: PySide6/Shiboken6 `6.11.1` (recorded in `uv.lock`)
+- Available licenses: LGPL-3.0-only, GPL-2.0-only, GPL-3.0-only, or applicable Qt commercial terms
+- Release route: LGPL-3.0-only; full LGPL/GPL texts are in `licenses/Qt/`
 
 The one-dir build keeps the Qt/PySide shared libraries as separate files. Do not merge,
 obfuscate, or prevent replacement of those libraries when distributing under LGPL terms.
-Anyone redistributing a build is responsible for selecting an applicable license and
-meeting its notice, source, relinking/replacement, and other requirements.
+The exact release procedure, upstream source links, replacement expectations, and Qt
+third-party attribution references are in `licenses/Qt/README.md`. Anyone redistributing
+a build is responsible for meeting the selected license's notice, source,
+relinking/replacement, and other requirements.
+
+The GUI uses only QtCore, QtGui, QtNetwork, and QtWidgets. Unused Qt PDF, QML,
+Quick, and Virtual Keyboard modules/plugins are excluded from the v0.1
+PyInstaller output. This avoids redistributing the GPLv3-only Qt Virtual
+Keyboard module and the additional Qt PDF/PDFium attribution payload without a
+feature that needs them. Any future use of those modules requires a new
+license review and updated notices.
 
 ### PyInstaller
 
@@ -48,6 +58,8 @@ the exact `COPYING.txt` supplied by the installed build tool is exported to `lic
 The Windows build can include Microsoft Visual C++ runtime DLLs required by CPython and
 native extension modules. Those DLLs remain subject to the applicable Microsoft Visual
 Studio redistributable terms; the LoRA Factory license does not replace those terms.
+The exact release-builder check and official links are in
+`licenses/Microsoft-Visual-Cpp/README.md`.
 
 ### Bundled Python packages
 
@@ -128,8 +140,17 @@ CUDA runtime components remain subject to the NVIDIA CUDA Toolkit End User Licen
 Agreement and redistributable component terms. The managed runtime uses officially
 published binary wheels; the GUI executable does not embed the system CUDA Toolkit.
 
+The managed lock also contains `pytorch-optimizer`, whose package metadata is Apache-2.0
+but whose documentation identifies component-level non-commercial terms for some
+algorithms. The default Factory profiles use `AdamW` or `AdamW8bit`; do not publish a
+prebuilt managed runtime or advertise unrestricted commercial use without reviewing every
+package and component in the lock and exporting their exact notices.
+
 ## User-selected base models
 
 SDXL and Illustrious-derived checkpoints have model-specific licenses. LoRA Factory records
 the selected file hash but does not infer or grant a license from its architecture. Users
-must review the checkpoint's actual license and usage terms.
+must review the checkpoint's actual license and usage terms, as well as rights to the
+training images and any generated outputs. The pinned CLIP model card also documents
+research-oriented intended use and deployment limitations; the model's source license
+does not remove those usage warnings.
