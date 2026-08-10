@@ -54,7 +54,7 @@ tqdm==4.70.0
 transformers==4.54.1
 typing-extensions==4.15.0
 urllib3==2.7.0
-voluptuous==0.15.2
+voluptuous==0.16.0
 wcwidth==0.8.2
 werkzeug==3.1.8
 zipp==4.1.0
