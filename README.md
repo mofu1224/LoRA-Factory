@@ -11,32 +11,122 @@ LoRA Factory は、Windows 11 向けのGUIツールです。
 
 ---
 
-## 使い方（5分で開始）
+## 使い方（ダウンロードからLoRA完成まで）
 
-### 1) 利用条件
+以下はGitHub ReleasesからWindows版ZIPをダウンロードした利用者向けの手順です。
+Python、CUDA、PyTorch、sd-scripts、WD14、CLIPはアプリ本体に同梱せず、初回Setupで管理ランタイムへ導入します。
+
+### 1) 事前に用意するもの
+
 - Windows 11 (x64)
-- NVIDIA GPU（学習時）
-- SDXL/Illustrious 互換 `.safetensors` ベースモデル
-- Codex CLI が使える ChatGPT アカウント（任意）
-- Microsoft Visual C++ x64 Redistributable（公開ZIPの起動前に導入）
-- GitHub Release 版を展開する場合は、`LoRA Factory.exe` が入ったZIPを展開
+- 学習に使えるNVIDIA GPUと最新のNVIDIAドライバー
+- 画像を保存するドライブの空き容量
+- Managed Training Runtime用に約15 GiB以上の空き容量
+- SDXL / Illustrious互換の`.safetensors`ベースモデル
+- 学習対象の画像（Characterは8枚以上、Styleは16枚以上を推奨）
+- ランタイムやモデルを取得するためのインターネット接続
+- ベースモデル・画像・生成物を利用する権利と各モデルのライセンス確認
 
-公開ZIPには`install_vcredist.cmd`を同梱しています。ダブルクリックすると
-WinGetから公式のMicrosoft x64ランタイムを導入します。WinGetがない場合も、
-公式インストーラーを自動取得して署名を確認したうえでUAC経由で導入します。
+### 2) ZIPをダウンロードする
+
+GitHub Releasesから`LoRA Factory_v0.1.zip`をダウンロードします。ZIPはGitHub Releasesの公式ページから取得し、ダウンロード完了後に展開してください。
+
+### 3) 展開してWindowsの前提ランタイムを導入する
+
+1. 検証済みのZIPを任意の作業フォルダーへ展開します。`LoRA Factory.exe`をZIPの中から直接起動しないでください。
+2. 展開先の`install_vcredist.cmd`をダブルクリックします。
+3. UACが表示されたら確認して、Microsoft Visual C++ x64 Redistributableの導入を完了します。
+
+このスクリプトはまずWinGetの公式Microsoftソースを使い、利用できない場合はMicrosoft公式インストーラーを取得して署名を確認してから導入します。コンソールに「already installed」と表示された場合は、すでに導入済みです。導入後にアプリがDLLエラーを表示する場合はWindowsを再起動してから再実行してください。
 
 <https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170>
 
-### 2) GUI起動
-1. `LoRA Factory.exe` を起動
-2. Setup の確認を実行
-3. 「Managed Training Runtime」の `Repair` を実行して初期環境を構築
-4. `New Project` でプロジェクト作成 → Dataset確認 → `Create LoRA`
+### 4) Git、uv、Codex CLIを準備する
 
-※ CUDA/PyTorch/sd-scripts/WD14/CLIP はアプリ本体には同梱しません。  
-初回起動時にローカル管理ランタイムとしてインストールします。
+Setupが確認するため、GitとuvをインストールしてPATHへ追加します。PowerShellを閉じて新しく開いた後、次を実行して確認します。
 
-### 3) 開発者（ソース実行）
+```powershell
+winget install --id Git.Git -e
+winget install --id astral-sh.uv -e
+git --version
+uv --version
+```
+
+WinGetを使わない場合は、[Git公式インストーラー](https://git-scm.com/download/win)と[uv公式インストール手順](https://docs.astral.sh/uv/getting-started/installation/)を使用してください。
+
+Runtime Codexを使う場合は、[Codex CLI公式ドキュメント](https://learn.chatgpt.com/docs/codex/cli)に従ってCodex CLIをインストールし、PowerShellで`codex`を実行して`Sign in with ChatGPT`を選びます。ログイン状態を次で確認します。
+
+```powershell
+codex --version
+codex login status
+```
+
+Codex CLIは任意のフォールバックを許可できますが、Codexによるレビューや自動化を使う場合はChatGPTアカウントでログインしてください。認証情報やAPIキーをプロジェクトへコピーする必要はありません。
+
+### 5) 初回起動とSetup
+
+1. 展開先の`LoRA Factory.exe`を起動します。
+2. Setup画面で各チェックの詳細を確認します。
+3. 初回は「Managed Training Runtime」の`Repair`を押します。
+4. ダウンロードとインストールが完了するまで待ちます。PyTorch、ONNX Runtime、固定版sd-scripts、WD14モデル、CLIP画像embeddingモデルが管理ランタイムへ導入されます。
+5. NVIDIA GPUの検出とdeep probeが完了し、Runtimeが`READY`になることを確認します。
+
+Setupでは、アプリ内Python 3.12、uv、Git、Codex CLIと認証、NVIDIAドライバー/NVML/GPU、Managed Training Runtime、PyTorch、ONNX CUDA、sd-scriptsを確認します。学習中に使用するGPUは、後でGPU UUIDを選択して明示的に許可します。
+
+### 6) プロジェクトを作成する
+
+`New Project`を開き、次の項目を設定します。
+
+1. `LoRA Name`: 完成する`.safetensors`の名前を入力して`Add Project`を押します。
+2. `Preset`: 人物の同一性は`Character`、絵柄は`Style`を選びます。
+3. `Trigger Token`: LoRAを呼び出す固有のトークンを決めます。
+4. `Base Model`: SDXL / Illustrious互換の`.safetensors`を指定します。
+5. `Images / Folders`: 学習画像を複数選択するか、画像フォルダーを指定します。
+6. `GPU Pool`: 使用を許可するGPU UUIDだけを選択します。選択していないGPUは使用されません。
+7. `Output`: 完成したLoRAを保存する親フォルダーを指定します。
+
+元画像は変更されません。アプリはハッシュを確認してプロジェクト内のRaw Storeへコピーし、加工は作業用コピーに対して行います。入力画像とベースモデルは、利用許諾を確認したものだけを使用してください。
+
+### 7) Datasetを確認して学習を開始する
+
+1. Dataset Reviewでサムネイル、元ファイル名、解像度、判定理由、タグ、最終caption、採用状態を確認します。
+2. 低解像度、極端な縦横比、空画像、重複、透かし候補などを確認し、不要な画像を除外します。
+3. Characterは8枚以上、Styleは16枚以上の採用画像を用意します。少ない場合は警告や停止になることがあります。
+4. `Create LoRA`を押して設定を保存し、検査・前処理・タグ付け・caption生成・学習を開始します。
+
+学習中はstage、epoch/step、loss、使用GPU、checkpoint、sample progressを確認できます。停止したい場合は`Cancel`を使ってください。完成済みartifactとresume stateを残して安全に停止し、`Recent Projects`から再開できます。学習中はアプリを終了せず、ディスクの空き容量も確保してください。
+
+### 8) 完成したLoRAを確認する
+
+Completion画面で推奨weight、preview、comparison、alternatives、出力先を確認します。完成フォルダーには通常、次のファイルが含まれます。
+
+```text
+<LoRAName>.safetensors
+alternatives/
+preview.png
+comparison.png
+README.txt
+training_info.json
+evaluation.json
+resolved_config.yaml
+reproducibility_manifest.json
+```
+
+SettingsでAUTOMATIC1111、Forge、ComfyUIのrootまたはLoRAフォルダーを登録すると、完成したLoRAをコピーできます。同名ファイルは上書きせず、コピー後にハッシュを確認します。
+
+### 9) よくある問題
+
+- Setupの`uv`または`Git`が赤い: PowerShellを開き直し、`git --version`と`uv --version`を確認してからアプリを再起動します。
+- Codexが赤い: `codex login status`を実行し、未ログインなら`codex`から`Sign in with ChatGPT`を実行します。フォールバック許可時は決定論的reviewへ移行できます。
+- Managed Training Runtimeが`NOT READY`: Setupの`Repair`を再実行し、約15 GiB以上の空き容量とインターネット接続を確認します。
+- GPUが見つからない: NVIDIAドライバーを更新し、`nvidia-smi`が成功することを確認してからアプリを再起動します。
+- `Application Services`やDLLエラー: 展開先の`install_vcredist.cmd`を再実行し、完了後にWindowsを再起動します。
+- ベースモデルが拒否される: SDXL / Illustrious互換の`.safetensors`であることと、モデルのライセンスを確認します。
+- ディスク不足: Managed Training Runtimeとプロジェクト出力先を別ドライブへ移すか、十分な空き容量を確保します。
+
+詳しい画面仕様、Datasetルール、cancel/resume、診断方法は[日本語ユーザーガイド](./docs/user-guide-ja.md)を参照してください。
+
+### 10) 開発者（ソース実行）
 
 ```powershell
 .\scripts\bootstrap.ps1
