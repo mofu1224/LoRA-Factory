@@ -56,6 +56,8 @@ if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
 Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $appDirectory
 Copy-Item -LiteralPath (Join-Path $repoRoot 'LICENSE') -Destination $appDirectory
 Copy-Item -LiteralPath (Join-Path $repoRoot 'THIRD_PARTY_NOTICES.md') -Destination $appDirectory
+Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts\install_vcredist.ps1') -Destination $appDirectory
+Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts\install_vcredist.cmd') -Destination $appDirectory
 $licenseDirectory = Join-Path $appDirectory 'licenses'
 & $uvCommand.Source run --frozen --extra build python -m lora_factory.packaging.license_export `
     --output $licenseDirectory
