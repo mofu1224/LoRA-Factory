@@ -51,7 +51,7 @@ build = ["pyinstaller>=6.14,<7"]
 dev = [
   "hypothesis>=6.136,<7",
   "mypy>=1.17,<2",
-  "pytest>=8.4,<9",
+  "pytest>=9.0.3,<10",
   "pytest-cov>=6.2,<7",
   "pytest-mock>=3.14,<4",
   "pytest-qt>=4.5,<5",
@@ -75,7 +75,7 @@ default-groups = ["dev"]
 dev = [
   "hypothesis>=6.136,<7",
   "mypy>=1.17,<2",
-  "pytest>=8.4,<9",
+  "pytest>=9.0.3,<10",
   "pytest-cov>=6.2,<7",
   "pytest-mock>=3.14,<4",
   "pytest-qt>=4.5,<5",
