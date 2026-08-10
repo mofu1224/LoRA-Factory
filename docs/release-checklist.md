@@ -17,8 +17,9 @@
 3. Verify the ZIP SHA-256, launch `LoRA Factory.exe`, run Setup, and complete a Fake Backend project.
 4. Create an annotated semantic-version tag such as `v0.1` and push that tag.
 5. The release workflow builds and attaches the Windows ZIP and SHA-256 file.
-6. Confirm the Visual Studio/Build Tools terms permit redistribution of every MSVC DLL in the ZIP.
+6. Confirm the public build was created with `-SystemVcRuntime` and contains no MSVC DLLs.
 7. Confirm the exact Qt/PySide source archive and LGPL source-offer procedure recorded in `licenses/Qt/README.md` remain available.
-8. Review release notes and verify all bundled licenses before marking the release public.
+8. Confirm the README links to the official Microsoft x64 Redistributable prerequisite.
+9. Review release notes and verify all bundled licenses before marking the release public.
 
 Real Backend validation additionally requires an authenticated Codex CLI, a compatible NVIDIA GPU, the managed runtime, a user-supplied compatible base model, and a non-private test dataset.
