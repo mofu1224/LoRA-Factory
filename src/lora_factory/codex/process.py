@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import locale
+import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,7 +22,13 @@ class CodexProcessResult:
 
 
 def _decode_process_output(raw: bytes) -> str:
-    for encoding in ("utf-8", "utf-8-sig", locale.getpreferredencoding(False), "cp932", "shift_jis"):
+    for encoding in (
+        "utf-8",
+        "utf-8-sig",
+        locale.getpreferredencoding(False),
+        "cp932",
+        "shift_jis",
+    ):
         try:
             return raw.decode(encoding)
         except UnicodeDecodeError:

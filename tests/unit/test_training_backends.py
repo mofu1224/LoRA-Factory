@@ -227,6 +227,7 @@ def test_process_manager_captures_separate_streams_without_shell(tmp_path: Path)
     assert result.stdout_path.read_text(encoding="utf-8").strip() == "hello"
     assert result.stderr_path.read_text(encoding="utf-8").strip() == "warning"
 
+
 def test_process_manager_streams_carriage_return_progress_lines(tmp_path: Path) -> None:
     lines: list[tuple[str, str]] = []
     result = ProcessManager().run(
