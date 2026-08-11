@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import locale
 import os
 import queue
-import locale
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
@@ -39,7 +39,8 @@ def _decode_log_line(raw: bytes) -> str:
             continue
     return raw.decode("utf-8", errors="replace")
 
-def _iter_log_lines(stream: BinaryIO):
+
+def _iter_log_lines(stream: BinaryIO) -> Iterator[str]:
     pending = bytearray()
     skip_lf = False
     read_chunk = getattr(stream, "read1", None)
@@ -60,6 +61,7 @@ def _iter_log_lines(stream: BinaryIO):
                 pending.append(byte)
     if pending:
         yield _decode_log_line(bytes(pending))
+
 
 class ProcessManager:
     def run(
