@@ -9,7 +9,12 @@ import pytest
 from lora_factory.codex.allowlist import validate_recovery_changes
 from lora_factory.codex.fallback import deterministic_fallback
 from lora_factory.codex.gateway import CodexGateway
-from lora_factory.codex.process import CodexProcessResult, build_codex_arguments
+from lora_factory.codex.process import (
+    CodexProcessResult,
+    build_codex_arguments,
+    run_codex_process,
+)
+from lora_factory.codex.prompts import prompt_for
 from lora_factory.codex.schemas import CodexTaskType, DatasetReview, RecoveryReview
 from lora_factory.codex.scratch_repo import ScratchRepository
 
@@ -81,6 +86,134 @@ def test_codex_arguments_require_read_only_ephemeral_structured_exec(tmp_path: P
     assert arguments[arguments.index("--output-schema") + 1] == str(call.schema_path)
     assert arguments[arguments.index("--output-last-message") + 1] == str(call.output_path)
     assert arguments[arguments.index("--cd") + 1] == str(call.root)
+
+
+def test_codex_prompt_references_large_sanitized_input_without_copying_it() -> None:
+    marker = "bounded-sanitized-value-" * 2_000
+
+    prompt = prompt_for(
+        CodexTaskType.CAPTION_REVIEW,
+        "large-input.json",
+        {"captions": marker},
+    )
+
+    assert "input/large-input.json" in prompt
+    assert marker not in prompt
+    assert len(prompt) < 2_000
+
+
+def test_codex_process_passes_only_required_non_secret_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call = ScratchRepository(tmp_path / "runtime").prepare_call(
+        call_id="environment-boundary",
+        task_type=CodexTaskType.RECOVERY,
+        sanitized_input={"classification": "CUDA_OOM"},
+        response_model=RecoveryReview,
+    )
+    source_environment = {
+        "Path": r"C:\Tools",
+        "PATHEXT": ".COM;.EXE",
+        "SystemRoot": r"C:\Windows",
+        "TEMP": r"C:\Temp",
+        "USERPROFILE": r"C:\Users\tester",
+        "APPDATA": r"C:\Users\tester\AppData\Roaming",
+        "LOCALAPPDATA": r"C:\Users\tester\AppData\Local",
+        "CODEX_HOME": r"C:\Users\tester\.codex",
+        "CODEX_SQLITE_HOME": r"C:\Users\tester\.codex\sqlite",
+        "CODEX_CA_CERTIFICATE": r"C:\certs\ca.pem",
+        "SSL_CERT_FILE": r"C:\certs\system.pem",
+        "LANG": "ja_JP.UTF-8",
+        "CODEX_API_KEY": "test-codex-key",
+        "CODEX_ACCESS_TOKEN": "test-codex-token",
+        "GITHUB_TOKEN": "test-github-token",
+        "HF_TOKEN": "test-hugging-face-token",
+        "DATABASE_PASSWORD": "test-database-password",
+        "CUSTOM_PROVIDER_SECRET": "test-provider-secret",
+        "UNRELATED_SETTING": "not required by Codex",
+    }
+    captured_environment: dict[str, str] = {}
+
+    class CompletedProcess:
+        returncode = 0
+
+        @staticmethod
+        def communicate(timeout: int | None = None) -> tuple[bytes, bytes]:
+            del timeout
+            return b"", b""
+
+    def fake_popen(arguments: list[str], **kwargs: Any) -> CompletedProcess:
+        del arguments
+        captured_environment.update(kwargs["env"])
+        return CompletedProcess()
+
+    monkeypatch.setattr("lora_factory.codex.process.os.environ", source_environment)
+    monkeypatch.setattr("lora_factory.codex.process.subprocess.Popen", fake_popen)
+
+    run_codex_process(
+        ["codex", "exec"],
+        call=call,
+        timeout_seconds=10,
+        home_for_redaction=tmp_path,
+    )
+
+    assert captured_environment == {
+        key: source_environment[key]
+        for key in (
+            "Path",
+            "PATHEXT",
+            "SystemRoot",
+            "TEMP",
+            "USERPROFILE",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "CODEX_HOME",
+            "CODEX_SQLITE_HOME",
+            "CODEX_CA_CERTIFICATE",
+            "SSL_CERT_FILE",
+            "LANG",
+        )
+    }
+
+
+def test_codex_version_probe_uses_the_same_sanitized_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_environment = {
+        "Path": r"C:\Tools",
+        "SystemRoot": r"C:\Windows",
+        "USERPROFILE": r"C:\Users\tester",
+        "CODEX_HOME": r"C:\Users\tester\.codex",
+        "LANG": "ja_JP.UTF-8",
+        "CODEX_API_KEY": "test-codex-key",
+        "GITHUB_TOKEN": "test-github-token",
+        "DATABASE_PASSWORD": "test-database-password",
+    }
+    captured_environment: dict[str, str] = {}
+
+    class CompletedVersionProbe:
+        returncode = 0
+        stdout = "codex-cli 1.0\n"
+
+    def fake_run(arguments: list[str], **kwargs: Any) -> CompletedVersionProbe:
+        assert arguments == ["codex", "--version"]
+        captured_environment.update(kwargs["env"])
+        return CompletedVersionProbe()
+
+    monkeypatch.setattr("lora_factory.codex.gateway.os.environ", source_environment)
+    monkeypatch.setattr("lora_factory.codex.gateway.shutil.which", lambda executable: executable)
+    monkeypatch.setattr("lora_factory.codex.gateway.subprocess.run", fake_run)
+
+    assert CodexGateway(tmp_path / "runtime").version() == "codex-cli 1.0"
+    assert captured_environment == {
+        "Path": source_environment["Path"],
+        "SystemRoot": source_environment["SystemRoot"],
+        "USERPROFILE": source_environment["USERPROFILE"],
+        "CODEX_HOME": source_environment["CODEX_HOME"],
+        "LANG": source_environment["LANG"],
+    }
 
 
 def test_deterministic_fallback_never_changes_training_or_recovery_settings() -> None:

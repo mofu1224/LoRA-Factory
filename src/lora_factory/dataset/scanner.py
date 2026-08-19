@@ -94,17 +94,7 @@ def scan_image_inputs(
         if stop_scanning:
             break
         if source.is_dir():
-            try:
-                candidates = _directory_files(source, recursive=recursive)
-            except OSError as exc:
-                issues.append(
-                    ScanIssue(
-                        path=source,
-                        code="unreadable",
-                        message=f"Cannot enumerate input directory {source}: {exc}",
-                    )
-                )
-                continue
+            candidates = _directory_files(source, recursive=recursive)
         elif source.is_file():
             candidates = (source,)
         else:
@@ -117,7 +107,21 @@ def scan_image_inputs(
             )
             continue
 
-        for candidate in candidates:
+        candidate_iterator = iter(candidates)
+        while True:
+            try:
+                candidate = next(candidate_iterator)
+            except StopIteration:
+                break
+            except OSError as exc:
+                issues.append(
+                    ScanIssue(
+                        path=source,
+                        code="unreadable",
+                        message=f"Cannot enumerate input directory {source}: {exc}",
+                    )
+                )
+                break
             enumerated_entries += 1
             if enumerated_entries > active_limits.max_enumerated_entries:
                 issues.append(

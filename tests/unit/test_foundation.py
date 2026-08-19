@@ -6,7 +6,12 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import inspect
 
-from lora_factory.config.models import BackendMode, PresetKind, ProjectConfig, ProjectDraft
+from lora_factory.config.models import (
+    BackendMode,
+    PresetKind,
+    ProjectConfig,
+    ProjectDraft,
+)
 from lora_factory.config.resolver import resolve_layers
 from lora_factory.config.validation import (
     ensure_descendant,
@@ -23,6 +28,37 @@ from lora_factory.storage.database import Database
 from lora_factory.storage.orm import ProjectRow, RunRow, StageRow, TrainingAttemptRow
 from lora_factory.storage.repositories import StageRepository
 
+WINDOWS_RESERVED_DEVICE_NAMES = (
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+    "COM¹",
+    "COM²",
+    "COM³",
+    "LPT¹",
+    "LPT²",
+    "LPT³",
+)
+
 
 def make_config(tmp_path: Path, **updates: object) -> ProjectConfig:
     payload: dict[str, object] = {
@@ -38,6 +74,71 @@ def make_config(tmp_path: Path, **updates: object) -> ProjectConfig:
     }
     payload.update(updates)
     return ProjectConfig.model_validate(payload)
+
+
+def validate_project_name_model(
+    tmp_path: Path,
+    model_type: type[ProjectDraft] | type[ProjectConfig],
+    field_name: str,
+    value: str,
+) -> None:
+    if model_type is ProjectDraft:
+        payload = {"project_id": "valid-project", "lora_name": "Valid LoRA"}
+        payload[field_name] = value
+        ProjectDraft.model_validate(payload)
+        return
+    make_config(tmp_path, **{field_name: value})
+
+
+@pytest.mark.parametrize("model_type", [ProjectDraft, ProjectConfig], ids=["draft", "config"])
+@pytest.mark.parametrize(
+    ("field_name", "error_message"),
+    [
+        ("project_id", "project_id contains characters invalid in a Windows directory"),
+        ("lora_name", "LoRA name contains characters invalid in a Windows filename"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("lowercase", "suffix"),
+    [(False, ""), (True, ".safetensors")],
+    ids=["bare", "case-insensitive-with-extension"],
+)
+@pytest.mark.parametrize("reserved_name", WINDOWS_RESERVED_DEVICE_NAMES)
+def test_project_names_reject_windows_reserved_device_names(
+    tmp_path: Path,
+    model_type: type[ProjectDraft] | type[ProjectConfig],
+    field_name: str,
+    error_message: str,
+    lowercase: bool,
+    suffix: str,
+    reserved_name: str,
+) -> None:
+    value = (reserved_name.lower() if lowercase else reserved_name) + suffix
+
+    with pytest.raises(ValidationError, match=error_message):
+        validate_project_name_model(tmp_path, model_type, field_name, value)
+
+
+@pytest.mark.parametrize("model_type", [ProjectDraft, ProjectConfig], ids=["draft", "config"])
+@pytest.mark.parametrize(
+    ("field_name", "error_message"),
+    [
+        ("project_id", "project_id contains characters invalid in a Windows directory"),
+        ("lora_name", "LoRA name contains characters invalid in a Windows filename"),
+    ],
+)
+@pytest.mark.parametrize("control_code", range(32), ids=lambda value: f"U+{value:04X}")
+def test_project_names_reject_ascii_control_characters(
+    tmp_path: Path,
+    model_type: type[ProjectDraft] | type[ProjectConfig],
+    field_name: str,
+    error_message: str,
+    control_code: int,
+) -> None:
+    with pytest.raises(ValidationError, match=error_message):
+        validate_project_name_model(
+            tmp_path, model_type, field_name, f"safe{chr(control_code)}name"
+        )
 
 
 @pytest.mark.parametrize("token", ["", "a,b", "a\nb", "a;b", "a  b"])

@@ -9,6 +9,7 @@ import sys
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from lora_factory.codex.environment import build_codex_environment
 from lora_factory.config.models import AppSettings, DestinationConfig, DestinationKind
 from lora_factory.gpu.discovery import discover_nvidia_gpus
 from lora_factory.gpu.models import GpuDevice
@@ -24,6 +25,23 @@ type GpuDiscovery = Callable[[], Sequence[GpuDevice]]
 
 
 def _run_command(argv: tuple[str, ...], timeout: float) -> subprocess.CompletedProcess[str]:
+    return _run_command_with_environment(argv, timeout, environment=None)
+
+
+def _run_codex_command(argv: tuple[str, ...], timeout: float) -> subprocess.CompletedProcess[str]:
+    return _run_command_with_environment(
+        argv,
+        timeout,
+        environment=build_codex_environment(os.environ),
+    )
+
+
+def _run_command_with_environment(
+    argv: tuple[str, ...],
+    timeout: float,
+    *,
+    environment: Mapping[str, str] | None,
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(  # noqa: S603 - executables are resolved before fixed read-only calls.
         list(argv),
         check=False,
@@ -32,6 +50,7 @@ def _run_command(argv: tuple[str, ...], timeout: float) -> subprocess.CompletedP
         encoding="utf-8",
         errors="replace",
         timeout=timeout,
+        env=environment,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
 
@@ -117,10 +136,12 @@ def build_setup_checks(
     destinations: Sequence[DestinationConfig],
     which: Which = shutil.which,
     runner: CommandRunner = _run_command,
+    codex_runner: CommandRunner | None = None,
     gpu_discovery: GpuDiscovery = discover_nvidia_gpus,
 ) -> tuple[Mapping[str, Any], ...]:
     """Return quick checks without rerunning Torch, ONNX, or sd-scripts deep probes."""
 
+    active_codex_runner = codex_runner or (_run_codex_command if runner is _run_command else runner)
     checks: list[dict[str, Any]] = [
         _check(
             "Factory Python",
@@ -146,7 +167,7 @@ def build_setup_checks(
     )
     if codex:
         try:
-            login = runner((codex, "login", "status"), 10.0)
+            login = active_codex_runner((codex, "login", "status"), 10.0)
             checks.append(
                 _check(
                     "Codex Authentication",

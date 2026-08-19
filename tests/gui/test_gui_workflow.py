@@ -12,6 +12,8 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QFileDialog, QLineEdit
 
 from lora_factory.config.models import ProjectConfig
+from lora_factory.core.cancellation import CancelledError
+from lora_factory.core.exceptions import PipelineError
 from lora_factory.gui.main_window import MainWindow
 from lora_factory.gui.project_editor import AdvancedSettingsDialog
 
@@ -226,6 +228,36 @@ class FakeController:
         }
 
 
+class FailingController(FakeController):
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.error = error
+
+    def run_pipeline(
+        self, config: ProjectConfig, emit: Callable[[dict[str, Any]], None]
+    ) -> Mapping[str, Any]:
+        del emit
+        self.run_thread_id = threading.get_ident()
+        self.configs.append(config)
+        raise self.error
+
+
+class FatalRecentController(FakeController):
+    def recent_projects(self) -> Sequence[Mapping[str, Any]]:
+        return (
+            {
+                "project_id": "fatal-project",
+                "lora_name": "Fatal Project",
+                "status": "failed_fatal",
+            },
+            {
+                "project_id": "draft-project",
+                "lora_name": "Draft Project",
+                "status": "draft",
+            },
+        )
+
+
 def fill_valid_project(window: MainWindow, tmp_path: Path) -> None:
     editor = window.project_editor
     editor.lora_name.setText("Test LoRA")
@@ -234,6 +266,70 @@ def fill_valid_project(window: MainWindow, tmp_path: Path) -> None:
     editor.output_folder.setText(str(tmp_path / "output"))
     editor.add_training_paths((tmp_path / "images",))
     editor.select_gpu_automatically()
+
+
+def assert_pipeline_failure(
+    qtbot: Any,
+    tmp_path: Path,
+    error: Exception,
+    *,
+    recoverable: bool,
+) -> None:
+    controller = FailingController(error)
+    window = MainWindow(controller)
+    qtbot.addWidget(window)
+    window.show()
+    fill_valid_project(window, tmp_path)
+
+    with qtbot.waitSignal(window.pipeline_failed, timeout=3000) as failure:
+        qtbot.mouseClick(window.project_editor.start_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: window._thread is None, timeout=3000)
+
+    assert failure.args == [f"{type(error).__name__}: {error}"]
+    assert window.progress_view.resume_button.isEnabled() is recoverable
+
+
+def test_recoverable_pipeline_error_enables_resume(qtbot: Any, tmp_path: Path) -> None:
+    assert_pipeline_failure(
+        qtbot,
+        tmp_path,
+        PipelineError("temporary training failure", recoverable=True),
+        recoverable=True,
+    )
+
+
+def test_unexpected_pipeline_error_disables_resume(qtbot: Any, tmp_path: Path) -> None:
+    assert_pipeline_failure(
+        qtbot,
+        tmp_path,
+        RuntimeError("invalid runtime state"),
+        recoverable=False,
+    )
+
+
+def test_safe_boundary_cancellation_enables_resume(qtbot: Any, tmp_path: Path) -> None:
+    assert_pipeline_failure(
+        qtbot,
+        tmp_path,
+        CancelledError("cancelled at a safe stage boundary"),
+        recoverable=True,
+    )
+
+
+def test_fatal_recent_project_is_filtered_and_routed_without_resume(qtbot: Any) -> None:
+    window = MainWindow(FatalRecentController())
+    qtbot.addWidget(window)
+    window.show()
+
+    qtbot.mouseClick(window.failed_button, Qt.MouseButton.LeftButton)
+
+    assert window.recent_list.count() == 1
+    recent = window.recent_list.item(0)
+    assert recent is not None
+    window.recent_list.itemActivated.emit(recent)
+    assert window.pages.currentWidget() is window.progress_view
+    assert window.progress_view.project_id == "fatal-project"
+    assert not window.progress_view.resume_button.isEnabled()
 
 
 def test_name_only_add_project_creates_structure_without_starting_pipeline(qtbot: Any) -> None:

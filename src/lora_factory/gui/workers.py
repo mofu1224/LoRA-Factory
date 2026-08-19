@@ -8,6 +8,8 @@ from typing import Any, Literal
 from PySide6.QtCore import QObject, Signal, Slot
 
 from lora_factory.config.models import ProjectConfig
+from lora_factory.core.cancellation import CancelledError
+from lora_factory.core.exceptions import PipelineError
 from lora_factory.gui.contracts import ApplicationController, as_mapping
 
 
@@ -16,7 +18,7 @@ class PipelineWorker(QObject):
 
     event_received = Signal(object)
     completed = Signal(object)
-    failed = Signal(str)
+    failed = Signal(str, bool)
     finished = Signal()
 
     def __init__(
@@ -46,7 +48,10 @@ class PipelineWorker(QObject):
                 result = self._controller.resume_project(self._project_id, self._emit_event)
             self.completed.emit(as_mapping(result))
         except Exception as error:
-            self.failed.emit(f"{type(error).__name__}: {error}")
+            recoverable = isinstance(error, CancelledError) or (
+                isinstance(error, PipelineError) and error.recoverable
+            )
+            self.failed.emit(f"{type(error).__name__}: {error}", recoverable)
         finally:
             self.finished.emit()
 

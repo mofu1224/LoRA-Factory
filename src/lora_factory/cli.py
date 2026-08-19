@@ -615,8 +615,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Programmatic entry point used by ``python -m lora_factory.cli``."""
 
     arguments = list(argv) if argv is not None else sys.argv[1:]
-    app(args=arguments, prog_name="lora-factory", standalone_mode=False)
-    return 0
+    result = app(args=arguments, prog_name="lora-factory", standalone_mode=False)
+    return result if isinstance(result, int) else 0
 
 
 if __name__ == "__main__":
