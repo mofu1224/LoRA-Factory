@@ -8,6 +8,7 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from lora_factory.codex.environment import build_codex_environment
 from lora_factory.codex.scratch_repo import ScratchCall
 from lora_factory.util.redaction import redact_text
 
@@ -66,17 +67,7 @@ def run_codex_process(
     timeout_seconds: int,
     home_for_redaction: Path | None = None,
 ) -> CodexProcessResult:
-    environment = {
-        key: value
-        for key, value in os.environ.items()
-        if key.upper()
-        not in {
-            "OPENAI_API_KEY",
-            "ANTHROPIC_API_KEY",
-            "AWS_SECRET_ACCESS_KEY",
-            "AZURE_OPENAI_API_KEY",
-        }
-    }
+    environment = build_codex_environment(os.environ)
     # The argument array is built by ``build_codex_arguments``; no shell parses it.
     process = subprocess.Popen(  # noqa: S603
         arguments,

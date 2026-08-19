@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -32,7 +33,9 @@ from lora_factory.dataset.split import deterministic_validation_split
 from lora_factory.project.import_service import ImmutableImportService
 from lora_factory.project.integrity import RawIntegrityError, verify_raw_store
 from lora_factory.project.layout import ProjectLayout
+from lora_factory.project.manifest import DatasetManifest
 from lora_factory.util.hashing import sha256_file
+from lora_factory.util.json import write_json_atomic
 
 
 def _pattern(path: Path, *, size: tuple[int, int] = (128, 96), offset: int = 0) -> None:
@@ -46,6 +49,22 @@ def _pattern(path: Path, *, size: tuple[int, int] = (128, 96), offset: int = 0) 
         axis=2,
     ).astype(np.uint8)
     Image.fromarray(array, mode="RGB").save(path)
+
+
+_VALID_RAW_DIGEST = "a" * 64
+
+
+def _manifest_payload(**raw_overrides: object) -> dict[str, object]:
+    raw_asset: dict[str, object] = {
+        "asset_id": _VALID_RAW_DIGEST,
+        "sha256": _VALID_RAW_DIGEST,
+        "stored_filename": f"{_VALID_RAW_DIGEST}.png",
+        "extension": ".png",
+        "size_bytes": 1,
+        "sources": [],
+    }
+    raw_asset.update(raw_overrides)
+    return {"project_id": "project", "raw_assets": [raw_asset]}
 
 
 def test_scan_unicode_is_shallow_by_default_and_recursive_on_request(tmp_path: Path) -> None:
@@ -148,6 +167,209 @@ def test_import_uses_verified_copies_and_monotonic_source_references(tmp_path: P
     _pattern(first, offset=37)
     assert sha256_file(raw) == source_hash
     assert sha256_file(first) != source_hash
+
+
+def test_dataset_manifest_rejects_raw_path_traversal_at_validation_boundary() -> None:
+    with pytest.raises(ValueError, match="stored_filename"):
+        DatasetManifest.model_validate(_manifest_payload(stored_filename="../outside.png"))
+
+
+@pytest.mark.parametrize("invalid_digest", ["A" * 64, "a" * 63])
+def test_dataset_manifest_requires_lowercase_sha256_identity(invalid_digest: str) -> None:
+    with pytest.raises(ValueError, match="sha256"):
+        DatasetManifest.model_validate(
+            _manifest_payload(
+                asset_id=invalid_digest,
+                sha256=invalid_digest,
+                stored_filename=f"{invalid_digest}.png",
+            )
+        )
+
+
+def test_dataset_manifest_requires_asset_id_to_match_sha256() -> None:
+    with pytest.raises(ValueError, match="asset_id"):
+        DatasetManifest.model_validate(_manifest_payload(asset_id="b" * 64))
+
+
+def test_dataset_manifest_rejects_unsupported_raw_extension() -> None:
+    with pytest.raises(ValueError, match="extension"):
+        DatasetManifest.model_validate(
+            _manifest_payload(
+                stored_filename=f"{_VALID_RAW_DIGEST}.gif",
+                extension=".gif",
+            )
+        )
+
+
+def test_import_rejects_tampered_manifest_before_asset_io(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.png"
+    _pattern(source)
+    layout = ProjectLayout(tmp_path / "project")
+    layout.create()
+    write_json_atomic(
+        layout.manifest,
+        _manifest_payload(stored_filename="../outside.png"),
+    )
+
+    def unexpected_asset_io(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("asset bytes were accessed before manifest validation")
+
+    monkeypatch.setattr(
+        "lora_factory.project.import_service.validate_image_header", unexpected_asset_io
+    )
+    monkeypatch.setattr("lora_factory.project.import_service.sha256_file", unexpected_asset_io)
+
+    with pytest.raises(ValueError, match="stored_filename"):
+        ImmutableImportService(layout, project_id="project").import_paths((source,))
+
+
+def test_integrity_normalizes_tampered_manifest_validation_failure(tmp_path: Path) -> None:
+    layout = ProjectLayout(tmp_path / "project")
+    layout.create()
+    write_json_atomic(
+        layout.manifest,
+        _manifest_payload(stored_filename="../outside.png"),
+    )
+
+    with pytest.raises(RawIntegrityError, match="Raw manifest is invalid or unreadable"):
+        verify_raw_store(layout)
+
+
+def test_dataset_manifest_accepts_content_addressed_raw_asset() -> None:
+    manifest = DatasetManifest.model_validate(
+        _manifest_payload(
+            stored_filename=f"{_VALID_RAW_DIGEST}.webp",
+            extension=".webp",
+        )
+    )
+
+    asset = manifest.raw_assets[0]
+    assert asset.asset_id == asset.sha256 == _VALID_RAW_DIGEST
+    assert asset.stored_filename == f"{_VALID_RAW_DIGEST}{asset.extension}"
+
+
+@pytest.mark.parametrize("manifest_contains_asset", [False, True])
+def test_import_rejects_linked_raw_object_before_hash_or_chmod(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    manifest_contains_asset: bool,
+) -> None:
+    source = tmp_path / "source.png"
+    _pattern(source)
+    digest = sha256_file(source)
+    layout = ProjectLayout(tmp_path / "project")
+    layout.create()
+    raw_path = layout.raw / f"{digest}.png"
+    shutil.copyfile(source, raw_path)
+    if manifest_contains_asset:
+        write_json_atomic(
+            layout.manifest,
+            _manifest_payload(
+                asset_id=digest,
+                sha256=digest,
+                stored_filename=raw_path.name,
+                size_bytes=source.stat().st_size,
+            ),
+        )
+
+    original_is_symlink = Path.is_symlink
+    hashed_paths: list[Path] = []
+
+    def report_raw_object_link(path: Path) -> bool:
+        return path == raw_path or original_is_symlink(path)
+
+    def tracked_sha256(path: Path) -> str:
+        hashed_paths.append(path)
+        return sha256_file(path)
+
+    def unexpected_chmod(_path: Path) -> None:
+        raise AssertionError("linked Raw object reached chmod")
+
+    monkeypatch.setattr(Path, "is_symlink", report_raw_object_link)
+    monkeypatch.setattr("lora_factory.project.import_service.sha256_file", tracked_sha256)
+    monkeypatch.setattr("lora_factory.project.import_service._make_raw_read_only", unexpected_chmod)
+
+    result = ImmutableImportService(layout, project_id="project").import_paths((source,))
+
+    assert result.imported_asset_ids == ()
+    assert result.reused_asset_ids == ()
+    assert len(result.failures) == 1
+    assert "link" in result.failures[0].message.casefold()
+    assert hashed_paths == [source.resolve()]
+
+
+def test_import_rejects_hardlinked_raw_object_before_hash_or_chmod(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.png"
+    _pattern(source)
+    digest = sha256_file(source)
+    layout = ProjectLayout(tmp_path / "project")
+    layout.create()
+    raw_path = layout.raw / f"{digest}.png"
+    os.link(source, raw_path)
+    hashed_paths: list[Path] = []
+
+    def tracked_sha256(path: Path) -> str:
+        hashed_paths.append(path)
+        return sha256_file(path)
+
+    def unexpected_chmod(_path: Path) -> None:
+        raise AssertionError("hardlinked Raw object reached chmod")
+
+    monkeypatch.setattr("lora_factory.project.import_service.sha256_file", tracked_sha256)
+    monkeypatch.setattr("lora_factory.project.import_service._make_raw_read_only", unexpected_chmod)
+
+    result = ImmutableImportService(layout, project_id="project").import_paths((source,))
+
+    assert result.imported_asset_ids == ()
+    assert len(result.failures) == 1
+    assert "exactly one filesystem link" in result.failures[0].message
+    assert hashed_paths == [source.resolve()]
+
+
+def test_integrity_rejects_raw_root_junction_before_object_io(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    layout = ProjectLayout(tmp_path / "project")
+    layout.create()
+    original_is_junction = Path.is_junction
+
+    def report_raw_root_junction(path: Path) -> bool:
+        return path == layout.raw or original_is_junction(path)
+
+    monkeypatch.setattr(Path, "is_junction", report_raw_root_junction)
+
+    with pytest.raises(RawIntegrityError, match="symbolic link or junction"):
+        verify_raw_store(
+            layout,
+            DatasetManifest.model_validate(_manifest_payload()),
+        )
+
+
+def test_integrity_rejects_hardlinked_raw_object(tmp_path: Path) -> None:
+    source = tmp_path / "source.png"
+    _pattern(source)
+    digest = sha256_file(source)
+    layout = ProjectLayout(tmp_path / "project")
+    layout.create()
+    raw_path = layout.raw / f"{digest}.png"
+    os.link(source, raw_path)
+    manifest = DatasetManifest.model_validate(
+        _manifest_payload(
+            asset_id=digest,
+            sha256=digest,
+            stored_filename=raw_path.name,
+            size_bytes=source.stat().st_size,
+        )
+    )
+
+    with pytest.raises(RawIntegrityError, match="exactly one filesystem link"):
+        verify_raw_store(layout, manifest)
 
 
 def test_raw_integrity_verification_rejects_one_byte_change(tmp_path: Path) -> None:
@@ -331,3 +553,65 @@ def test_diversity_reports_content_and_duplicate_dominance() -> None:
     assert report.content_diversity > 0
     assert report.dominant_character_ratio == pytest.approx(2 / 3)
     assert report.near_duplicate_cluster_dominance == pytest.approx(2 / 3)
+
+
+def test_scan_keeps_discovered_files_when_directory_iteration_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    interrupted_directory = tmp_path / "interrupted"
+    interrupted_directory.mkdir()
+    discovered_before_error = interrupted_directory / "first.png"
+    separate_input = tmp_path / "separate.png"
+    _pattern(discovered_before_error)
+    _pattern(separate_input, offset=17)
+    original_iterdir = Path.iterdir
+
+    def interrupted_iterdir(path: Path) -> Iterator[Path]:
+        if path == interrupted_directory:
+            yield discovered_before_error
+            raise OSError("directory enumeration interrupted")
+        yield from original_iterdir(path)
+
+    monkeypatch.setattr(Path, "iterdir", interrupted_iterdir)
+
+    result = scan_image_inputs((interrupted_directory, separate_input))
+
+    assert set(result.files) == {
+        discovered_before_error.resolve(),
+        separate_input.resolve(),
+    }
+    assert len(result.issues) == 1
+    assert result.issues[0].path == interrupted_directory.resolve()
+    assert result.issues[0].code == "unreadable"
+    assert "directory enumeration interrupted" in result.issues[0].message
+
+
+def test_import_continues_after_pillow_decompression_bomb(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bomb = tmp_path / "bomb.png"
+    valid = tmp_path / "valid.png"
+    _pattern(bomb)
+    _pattern(valid, offset=29)
+    bomb_hash = sha256_file(bomb)
+    valid_hash = sha256_file(valid)
+    original_open = Image.open
+
+    def open_with_bomb(path: Path, *args: object, **kwargs: object) -> Image.Image:
+        if path == bomb:
+            raise Image.DecompressionBombError("synthetic decompression bomb")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Image, "open", open_with_bomb)
+    layout = ProjectLayout(tmp_path / "project")
+
+    result = ImmutableImportService(layout, project_id="project").import_paths((bomb, valid))
+
+    assert result.imported_asset_ids == (valid_hash,)
+    assert len(result.failures) == 1
+    assert result.failures[0].source == bomb.resolve()
+    assert result.failures[0].code == "ImageSafetyError"
+    assert "synthetic decompression bomb" in result.failures[0].message
+    assert sha256_file(bomb) == bomb_hash
+    assert sha256_file(valid) == valid_hash
+    assert {path.name for path in layout.raw.iterdir()} == {f"{valid_hash}.png"}
