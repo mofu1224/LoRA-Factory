@@ -1994,19 +1994,25 @@ class LoRAFactoryController:
         response, audit, training_warning = self._codex_review(
             context, CodexTaskType.TRAINING_PLAN, training_payload
         )
-        proposed_items = response.get("proposed_changes", [])
-        proposed: dict[str, Any] = {}
-        for item in proposed_items:
-            field = str(item["field"])
-            if field in proposed:
-                raise ValueError(f"Runtime Codex proposed {field!r} more than once")
-            proposed[field] = item["value"]
-        validated_suggestions = validate_recovery_changes(
-            proposed,
-            locked_fields=context.config.locked_fields,
-        )
-
         advisory_messages: list[str] = []
+        try:
+            proposed_items = response.get("proposed_changes", [])
+            proposed: dict[str, Any] = {}
+            for item in proposed_items:
+                field = str(item["field"])
+                if field in proposed:
+                    raise ValueError(f"Runtime Codex proposed {field!r} more than once")
+                proposed[field] = item["value"]
+            validated_suggestions = validate_recovery_changes(
+                proposed,
+                locked_fields=context.config.locked_fields,
+            )
+        except ValueError as exc:
+            validated_suggestions = {}
+            advisory_messages.append(
+                f"Runtime Codex proposed invalid training changes; they were ignored: {exc}"
+            )
+
         if not dataset_response.get("approved", False):
             advisory_messages.append(
                 "Runtime Codex raised advisory dataset concerns; the deterministic quality "
