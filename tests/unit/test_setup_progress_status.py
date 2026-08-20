@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from lora_factory.application import setup_status as setup_status_module
 from lora_factory.application.progress_reporting import PipelineProgressReporter
 from lora_factory.application.setup_status import build_setup_checks
 from lora_factory.cli import doctor_command
@@ -26,6 +27,44 @@ from lora_factory.runtime.validation_record import (
 )
 
 GPU_UUID = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+
+def test_codex_login_status_runner_uses_sanitized_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_environment = {
+        "Path": r"C:\Tools",
+        "SystemRoot": r"C:\Windows",
+        "USERPROFILE": r"C:\Users\tester",
+        "CODEX_HOME": r"C:\Users\tester\.codex",
+        "LANG": "ja_JP.UTF-8",
+        "CODEX_API_KEY": "test-codex-key",
+        "GITHUB_TOKEN": "test-github-token",
+        "DATABASE_PASSWORD": "test-database-password",
+    }
+    captured_environment: dict[str, str] = {}
+
+    def fake_run(
+        arguments: list[str],
+        **kwargs: Any,
+    ) -> subprocess.CompletedProcess[str]:
+        assert arguments == ["codex", "login", "status"]
+        captured_environment.update(kwargs["env"])
+        return subprocess.CompletedProcess(arguments, 0, stdout="Logged in", stderr="")
+
+    monkeypatch.setattr(setup_status_module.os, "environ", source_environment)
+    monkeypatch.setattr(setup_status_module.subprocess, "run", fake_run)
+
+    result = setup_status_module._run_codex_command(("codex", "login", "status"), 10.0)
+
+    assert result.returncode == 0
+    assert captured_environment == {
+        "Path": source_environment["Path"],
+        "SystemRoot": source_environment["SystemRoot"],
+        "USERPROFILE": source_environment["USERPROFILE"],
+        "CODEX_HOME": source_environment["CODEX_HOME"],
+        "LANG": source_environment["LANG"],
+    }
 
 
 def _manager(tmp_path: Path) -> RuntimeManager:

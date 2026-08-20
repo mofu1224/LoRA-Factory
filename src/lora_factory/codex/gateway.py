@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -12,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from lora_factory.codex.environment import build_codex_environment
 from lora_factory.codex.fallback import deterministic_fallback
 from lora_factory.codex.process import build_codex_arguments, run_codex_process
 from lora_factory.codex.prompts import prompt_for
@@ -74,6 +76,8 @@ class CodexGateway:
             errors="replace",
             timeout=10,
             check=False,
+            env=build_codex_environment(os.environ),
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         return completed.stdout.strip() if completed.returncode == 0 else None
 
