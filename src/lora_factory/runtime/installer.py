@@ -266,6 +266,7 @@ class ManagedRuntimeInstaller:
             encoding="utf-8",
             errors="replace",
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if completed.returncode != 0:
             tail = "\n".join((completed.stdout + completed.stderr).splitlines()[-30:])

@@ -226,3 +226,27 @@ def test_process_manager_captures_separate_streams_without_shell(tmp_path: Path)
     assert ("stderr", "warning") in lines
     assert result.stdout_path.read_text(encoding="utf-8").strip() == "hello"
     assert result.stderr_path.read_text(encoding="utf-8").strip() == "warning"
+
+
+def test_process_manager_streams_carriage_return_progress_lines(tmp_path: Path) -> None:
+    lines: list[tuple[str, str]] = []
+    result = ProcessManager().run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.write('steps: 1/2\\rsteps: 2/2\\r'); sys.stdout.flush()",
+        ],
+        cwd=tmp_path,
+        environment={},
+        stdout_path=tmp_path / "stdout.log",
+        stderr_path=tmp_path / "stderr.log",
+        cancellation=CancellationToken(),
+        timeout_seconds=10,
+        on_line=lambda channel, line: lines.append((channel, line)),
+    )
+
+    assert result.return_code == 0
+    assert [line.strip() for channel, line in lines if channel == "stdout"] == [
+        "steps: 1/2",
+        "steps: 2/2",
+    ]

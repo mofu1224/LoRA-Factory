@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -53,6 +54,7 @@ class ScratchRepository:
                 shell=False,
                 capture_output=True,
                 text=True,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
             )
 
     def prepare_call(

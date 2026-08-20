@@ -44,7 +44,13 @@ def validate_image_header(
     try:
         with Image.open(path) as opened:
             width, height = opened.size
-    except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as exc:
+    except (
+        Image.DecompressionBombError,
+        UnidentifiedImageError,
+        OSError,
+        SyntaxError,
+        ValueError,
+    ) as exc:
         raise ImageSafetyError(f"Pillow cannot read the image header: {exc}") from exc
     pixels = width * height
     if width <= 0 or height <= 0:

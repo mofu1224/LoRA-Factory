@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -94,6 +95,7 @@ class RuntimeManager:
             errors="replace",
             timeout=10,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         return completed.stdout.strip() if completed.returncode == 0 else None
 
