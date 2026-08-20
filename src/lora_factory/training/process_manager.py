@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import locale
 import os
 import queue
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TextIO
+from typing import BinaryIO
 
 from lora_factory.core.cancellation import CancellationToken
 from lora_factory.util.redaction import redact_text
@@ -27,6 +28,39 @@ class ManagedProcessResult:
 
 
 LineCallback = Callable[[str, str], None]
+
+
+def _decode_log_line(raw: bytes) -> str:
+    encodings = ("utf-8", "utf-8-sig", locale.getpreferredencoding(False), "cp932", "shift_jis")
+    for encoding in encodings:
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
+
+def _iter_log_lines(stream: BinaryIO) -> Iterator[str]:
+    pending = bytearray()
+    skip_lf = False
+    read_chunk = getattr(stream, "read1", None)
+    while True:
+        chunk = read_chunk(4096) if read_chunk is not None else stream.read(4096)
+        if not chunk:
+            break
+        for byte in chunk:
+            if skip_lf:
+                skip_lf = False
+                if byte == 10:
+                    continue
+            if byte in (10, 13):
+                yield _decode_log_line(bytes(pending) + b"\n")
+                pending.clear()
+                skip_lf = byte == 13
+            else:
+                pending.append(byte)
+    if pending:
+        yield _decode_log_line(bytes(pending))
 
 
 class ProcessManager:
@@ -57,9 +91,6 @@ class ProcessManager:
             shell=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         messages: queue.Queue[tuple[str, str] | None] = queue.Queue()
@@ -131,11 +162,11 @@ class ProcessManager:
     @staticmethod
     def _read_stream(
         channel: str,
-        stream: TextIO | None,
+        stream: BinaryIO | None,
         messages: queue.Queue[tuple[str, str] | None],
     ) -> None:
         if stream is not None:
-            for line in iter(stream.readline, ""):
+            for line in _iter_log_lines(stream):
                 messages.put((channel, line))
             stream.close()
         messages.put(None)
