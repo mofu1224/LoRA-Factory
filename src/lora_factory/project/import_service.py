@@ -15,6 +15,7 @@ from lora_factory.dataset.image_safety import ImageSafetyLimits, validate_image_
 from lora_factory.dataset.scanner import ScanIssue, scan_image_inputs
 from lora_factory.project.layout import ProjectLayout
 from lora_factory.project.manifest import DatasetManifest, RawAsset, SourceReference
+from lora_factory.project.raw_store import validate_raw_object_path
 from lora_factory.util.hashing import sha256_file
 from lora_factory.util.json import read_json, write_json_atomic
 
@@ -147,7 +148,7 @@ class ImmutableImportService:
         )
 
         if existing is not None:
-            raw_path = self.layout.raw / existing.stored_filename
+            raw_path = validate_raw_object_path(self.layout, existing.stored_filename)
             if not raw_path.is_file() or sha256_file(raw_path) != source_sha256:
                 raise OSError(f"Immutable Raw object is missing or corrupted: {raw_path}")
             known_sources = {_source_identity(item.original_path) for item in existing.sources}
@@ -162,7 +163,7 @@ class ImmutableImportService:
 
         extension = source.suffix.lower()
         stored_filename = f"{source_sha256}{extension}"
-        destination = self.layout.raw / stored_filename
+        destination = validate_raw_object_path(self.layout, stored_filename)
         staging = self.layout.import_staging / f"{source_sha256}.{uuid4().hex}.partial"
         try:
             if destination.exists():
