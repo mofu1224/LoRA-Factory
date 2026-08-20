@@ -6,19 +6,38 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import numpy as np
 import pytest
 import typer
 from PIL import Image
+from safetensors.numpy import save_file
 from typer.testing import CliRunner
 
 from lora_factory.application.service import repository_root
-from lora_factory.cli import FakeE2EReport, _run_runtime_doctors, _select_gpu_uuids, app
+from lora_factory.cli import FakeE2EReport, _run_runtime_doctors, _select_gpu_uuids, app, main
 from lora_factory.config.models import PresetKind
 from lora_factory.dataset.quality import QualityDisposition, assess_image
 from lora_factory.gpu.models import GpuBinding, GpuDevice
 from lora_factory.model.inspector import inspect_sdxl_safetensors
 from lora_factory.testing.fixture_factory import generate_fake_fixture
 from lora_factory.training.profiles import default_preset_path
+
+
+def test_cli_main_preserves_real_command_exit_status(tmp_path: Path) -> None:
+    compatible = tmp_path / "compatible.safetensors"
+    incompatible = tmp_path / "incompatible.safetensors"
+    save_file(
+        {
+            "model.diffusion_model.input_blocks.0.0.weight": np.zeros((1, 1), dtype=np.float32),
+            "conditioner.embedders.1.model.text_projection": np.ones((1, 1), dtype=np.float32),
+        },
+        compatible,
+        metadata={"modelspec.architecture": "stable-diffusion-xl-v1-base"},
+    )
+    save_file({"unrelated.weight": np.zeros((1,), dtype=np.float32)}, incompatible)
+
+    assert main(["inspect-model", str(compatible), "--json"]) == 0
+    assert main(["inspect-model", str(incompatible)]) == 2
 
 
 def test_fake_fixture_is_valid_diverse_and_never_overwrites(tmp_path: Path) -> None:

@@ -11,6 +11,31 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 GPU_UUID_PATTERN = re.compile(r"^GPU-[0-9a-fA-F-]{8,}$")
 WINDOWS_FORBIDDEN = set('<>:"/\\|?*')
+WINDOWS_RESERVED_DEVICE_PATTERN = re.compile(
+    r"^(?:CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])(?:\.|$)",
+    re.IGNORECASE,
+)
+
+
+def _validate_windows_path_component(
+    value: str,
+    *,
+    label: str,
+    max_length: int,
+    component_kind: str,
+) -> str:
+    contains_control_character = any(ord(char) < 32 for char in value)
+    value = value.strip()
+    if not value or len(value) > max_length:
+        raise ValueError(f"{label} must contain 1-{max_length} characters")
+    if (
+        contains_control_character
+        or any(char in WINDOWS_FORBIDDEN for char in value)
+        or value.endswith((" ", "."))
+        or WINDOWS_RESERVED_DEVICE_PATTERN.match(value)
+    ):
+        raise ValueError(f"{label} contains characters invalid in a Windows {component_kind}")
+    return value
 
 
 class FrozenModel(BaseModel):
@@ -52,22 +77,22 @@ class ProjectDraft(FrozenModel):
     @field_validator("project_id")
     @classmethod
     def validate_project_id(cls, value: str) -> str:
-        value = value.strip()
-        if not value or len(value) > 80:
-            raise ValueError("project_id must contain 1-80 characters")
-        if any(char in WINDOWS_FORBIDDEN for char in value) or value.endswith((" ", ".")):
-            raise ValueError("project_id contains characters invalid in a Windows directory")
-        return value
+        return _validate_windows_path_component(
+            value,
+            label="project_id",
+            max_length=80,
+            component_kind="directory",
+        )
 
     @field_validator("lora_name")
     @classmethod
     def validate_lora_name(cls, value: str) -> str:
-        value = value.strip()
-        if not value or len(value) > 128:
-            raise ValueError("LoRA name must contain 1-128 characters")
-        if any(char in WINDOWS_FORBIDDEN for char in value) or value.endswith((" ", ".")):
-            raise ValueError("LoRA name contains characters invalid in a Windows filename")
-        return value
+        return _validate_windows_path_component(
+            value,
+            label="LoRA name",
+            max_length=128,
+            component_kind="filename",
+        )
 
 
 class AdvancedOverrides(FrozenModel):
@@ -104,22 +129,22 @@ class ProjectConfig(FrozenModel):
     @field_validator("project_id")
     @classmethod
     def validate_project_id(cls, value: str) -> str:
-        value = value.strip()
-        if not value or len(value) > 80:
-            raise ValueError("project_id must contain 1-80 characters")
-        if any(char in WINDOWS_FORBIDDEN for char in value) or value.endswith((" ", ".")):
-            raise ValueError("project_id contains characters invalid in a Windows directory")
-        return value
+        return _validate_windows_path_component(
+            value,
+            label="project_id",
+            max_length=80,
+            component_kind="directory",
+        )
 
     @field_validator("lora_name")
     @classmethod
     def validate_lora_name(cls, value: str) -> str:
-        value = value.strip()
-        if not value or len(value) > 128:
-            raise ValueError("LoRA name must contain 1-128 characters")
-        if any(char in WINDOWS_FORBIDDEN for char in value) or value.endswith((" ", ".")):
-            raise ValueError("LoRA name contains characters invalid in a Windows filename")
-        return value
+        return _validate_windows_path_component(
+            value,
+            label="LoRA name",
+            max_length=128,
+            component_kind="filename",
+        )
 
     @field_validator("trigger_token")
     @classmethod

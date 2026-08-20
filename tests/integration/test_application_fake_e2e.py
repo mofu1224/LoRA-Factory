@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
+import pytest
 import tomlkit
 from PIL import Image
 from safetensors.numpy import save_file
 from sqlalchemy import func, select
 
 from lora_factory.application.service import LoRAFactoryController
+from lora_factory.codex.fallback import deterministic_fallback
+from lora_factory.codex.schemas import CodexTaskType
 from lora_factory.config.models import (
     AppSettings,
     BackendMode,
@@ -55,6 +59,66 @@ def _images(root: Path) -> None:
             pixels[:, :, index % 3].astype(np.int16) + index * 7, 0, 255
         ).astype(np.uint8)
         Image.fromarray(pixels, mode="RGB").save(root / f"画像 {index + 1}.png")
+
+
+def test_invalid_codex_suggestion_is_audited_without_stopping_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "images"
+    _images(source)
+    base_model = tmp_path / "base.safetensors"
+    _fake_sdxl(base_model)
+    controller = LoRAFactoryController(
+        AppSettings(
+            projects_root=tmp_path / "projects",
+            managed_runtime_root=tmp_path / "runtime",
+            codex_runtime_root=tmp_path / "codex",
+        )
+    )
+
+    def review_with_invalid_training_change(
+        _context: object,
+        task: CodexTaskType,
+        payload: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], str | None]:
+        response = deterministic_fallback(task, payload).model_dump(mode="json")
+        if task is CodexTaskType.TRAINING_PLAN:
+            response["proposed_changes"] = [
+                {
+                    "field": "batch_size",
+                    "value": 999,
+                    "reason": "schema-valid but outside the Factory allowlist",
+                }
+            ]
+        return response, {"fallback_used": False, "task_type": task.value, "attempts": 1}, None
+
+    monkeypatch.setattr(controller, "_codex_review", review_with_invalid_training_change)
+    events: list[dict[str, Any]] = []
+
+    result = controller.run_pipeline(
+        ProjectConfig(
+            project_id="invalid-codex-advisory",
+            lora_name="Invalid Codex Advisory",
+            preset=PresetKind.CHARACTER,
+            trigger_token="advisory_person",  # noqa: S106 - domain trigger, not a credential
+            base_model=base_model,
+            input_paths=(source,),
+            selected_gpu_uuids=("GPU-00000000-0000-0000-0000-000000000001",),
+            output_root=tmp_path / "output",
+            backend_mode=BackendMode.FAKE,
+        ),
+        events.append,
+    )
+
+    assert result["status"] == "READY"
+    invalid_change_warnings = [
+        event
+        for event in events
+        if event["event_type"] == "warning" and "invalid training changes" in str(event["message"])
+    ]
+    assert len(invalid_change_warnings) == 1
+    assert invalid_change_warnings[0]["details"] == {"validated_suggestions": {}}
 
 
 def test_full_fake_pipeline_uses_real_formats_and_stage_graph(tmp_path: Path) -> None:

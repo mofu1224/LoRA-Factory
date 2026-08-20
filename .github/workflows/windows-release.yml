@@ -55,10 +55,22 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$env:GITHUB_REF_NAME"
-          "${{ steps.package.outputs.archive }}"
-          "${{ steps.package.outputs.hash_file }}"
-          --verify-tag
-          --generate-notes
-          --title "LoRA Factory $env:GITHUB_REF_NAME"
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          $archive = "${{ steps.package.outputs.archive }}"
+          $hashFile = "${{ steps.package.outputs.hash_file }}"
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+              Write-Host "Release $tag already exists; replacing its generated assets."
+              gh release upload $tag $archive $hashFile --repo $env:GITHUB_REPOSITORY --clobber
+          }
+          else {
+              gh release create $tag $archive $hashFile `
+                  --repo $env:GITHUB_REPOSITORY `
+                  --verify-tag `
+                  --generate-notes `
+                  --title "LoRA Factory $tag"
+          }
+          if ($LASTEXITCODE -ne 0) {
+              throw "GitHub release publication failed for tag $tag."
+          }
