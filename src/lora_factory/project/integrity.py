@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from lora_factory.project.layout import ProjectLayout
 from lora_factory.project.manifest import DatasetManifest
+from lora_factory.project.raw_store import RawStoreBoundaryError, validate_raw_object_path
 from lora_factory.util.hashing import sha256_file
 from lora_factory.util.json import read_json
 
 
 class RawIntegrityError(RuntimeError):
-    """Raised when a manifest-backed Raw object changed or disappeared."""
+    """Raised when the Raw manifest or a manifest-backed object fails integrity checks."""
 
 
 def verify_raw_store(
@@ -18,12 +19,19 @@ def verify_raw_store(
 ) -> dict[str, str]:
     """Hash every manifest object and return a deterministic asset-id snapshot."""
 
-    current = manifest or DatasetManifest.model_validate(read_json(layout.manifest))
+    if manifest is None:
+        try:
+            current = DatasetManifest.model_validate(read_json(layout.manifest))
+        except (OSError, ValueError) as exc:
+            raise RawIntegrityError(f"Raw manifest is invalid or unreadable: {exc}") from exc
+    else:
+        current = manifest
     snapshot: dict[str, str] = {}
     for asset in sorted(current.raw_assets, key=lambda item: item.asset_id):
-        path = (layout.raw / asset.stored_filename).resolve(strict=False)
-        if not path.is_relative_to(layout.raw.resolve(strict=False)):
-            raise RawIntegrityError(f"Raw manifest path escapes the store: {asset.stored_filename}")
+        try:
+            path = validate_raw_object_path(layout, asset.stored_filename)
+        except RawStoreBoundaryError as exc:
+            raise RawIntegrityError(str(exc)) from exc
         if not path.is_file():
             raise RawIntegrityError(f"Raw object is missing: {path}")
         if path.stat().st_size != asset.size_bytes:

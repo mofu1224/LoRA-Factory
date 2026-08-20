@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal, Slot
 from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -135,7 +135,9 @@ class MainWindow(QMainWindow):
         self.running_button.clicked.connect(lambda: self._filter_recent({"active", "running"}))
         self.completed_button.clicked.connect(lambda: self._filter_recent({"completed", "ready"}))
         self.failed_button.clicked.connect(
-            lambda: self._filter_recent({"failed", "failed_recoverable", "cancelled"})
+            lambda: self._filter_recent(
+                {"failed", "failed_recoverable", "failed_fatal", "cancelled"}
+            )
         )
         self.dataset_button.clicked.connect(
             lambda: self.pages.setCurrentWidget(self.dataset_review)
@@ -443,8 +445,9 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentWidget(self.completion_view)
         self.pipeline_completed.emit(data)
 
-    def _on_pipeline_failed(self, message: str) -> None:
-        self.progress_view.mark_failed(message, recoverable=True)
+    @Slot(str, bool)
+    def _on_pipeline_failed(self, message: str, recoverable: bool) -> None:
+        self.progress_view.mark_failed(message, recoverable=recoverable)
         self.pages.setCurrentWidget(self.progress_view)
         self.pipeline_failed.emit(message)
 
@@ -540,9 +543,18 @@ class MainWindow(QMainWindow):
             else:
                 self.completion_view.set_result(value)
             self.pages.setCurrentWidget(self.completion_view)
-        elif status in {"active", "running", "failed", "failed_recoverable", "cancelled"}:
+        elif status in {
+            "active",
+            "running",
+            "failed",
+            "failed_recoverable",
+            "failed_fatal",
+            "cancelled",
+        }:
             self.progress_view.project_id = project_id
-            self.progress_view.resume_button.setEnabled(status not in {"active", "running"})
+            self.progress_view.resume_button.setEnabled(
+                status not in {"active", "running", "failed_fatal"}
+            )
             self.pages.setCurrentWidget(self.progress_view)
         else:
             self.project_editor.load_project(value)
