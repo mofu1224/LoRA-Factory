@@ -184,7 +184,7 @@ class ImmutableImportService:
             sha256=source_sha256,
             stored_filename=stored_filename,
             extension=extension,
-            size_bytes=source.stat().st_size,
+            size_bytes=destination.stat().st_size,
             sources=(reference,),
         )
         manifest.raw_assets.append(asset)

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from lora_factory.core.cancellation import CancellationToken
+from lora_factory.util.process_tree import ProcessTree, process_tree_popen_kwargs
 from lora_factory.util.redaction import redact_text
 
 
@@ -92,7 +93,9 @@ class ProcessManager:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+            **process_tree_popen_kwargs(),
         )
+        process_tree = ProcessTree(process)
         messages: queue.Queue[tuple[str, str] | None] = queue.Queue()
         threads = [
             threading.Thread(
@@ -112,52 +115,55 @@ class ProcessManager:
         timed_out = False
         termination_started: float | None = None
         completed_readers = 0
-        with (
-            stdout_path.open("w", encoding="utf-8") as stdout_handle,
-            stderr_path.open("w", encoding="utf-8") as stderr_handle,
-        ):
-            while process.poll() is None or completed_readers < len(threads):
-                if cancellation.cancelled and process.poll() is None:
-                    cancelled = True
-                    termination_started = termination_started or time.monotonic()
-                    process.terminate()
-                if (
-                    timeout_seconds is not None
-                    and time.monotonic() - started > timeout_seconds
-                    and process.poll() is None
-                ):
-                    timed_out = True
-                    termination_started = termination_started or time.monotonic()
-                    process.terminate()
-                try:
-                    message = messages.get(timeout=0.1)
-                except queue.Empty:
+        try:
+            with (
+                stdout_path.open("w", encoding="utf-8") as stdout_handle,
+                stderr_path.open("w", encoding="utf-8") as stderr_handle,
+            ):
+                while process.poll() is None or completed_readers < len(threads):
+                    if cancellation.cancelled and process.poll() is None:
+                        cancelled = True
+                        termination_started = termination_started or time.monotonic()
+                        process_tree.terminate()
                     if (
-                        termination_started is not None
+                        timeout_seconds is not None
+                        and time.monotonic() - started > timeout_seconds
                         and process.poll() is None
-                        and time.monotonic() - termination_started > 5
                     ):
-                        process.kill()
-                    continue
-                if message is None:
-                    completed_readers += 1
-                    continue
-                channel, line = message
-                safe_line = redact_text(line, home=Path.home())
-                handle = stdout_handle if channel == "stdout" else stderr_handle
-                handle.write(safe_line)
-                handle.flush()
-                on_line(channel, safe_line.rstrip("\r\n"))
-        for thread in threads:
-            thread.join(timeout=1)
-        return ManagedProcessResult(
-            return_code=process.wait(timeout=5),
-            cancelled=cancelled,
-            timed_out=timed_out,
-            duration_seconds=time.monotonic() - started,
-            stdout_path=stdout_path,
-            stderr_path=stderr_path,
-        )
+                        timed_out = True
+                        termination_started = termination_started or time.monotonic()
+                        process_tree.terminate()
+                    try:
+                        message = messages.get(timeout=0.1)
+                    except queue.Empty:
+                        if (
+                            termination_started is not None
+                            and process.poll() is None
+                            and time.monotonic() - termination_started > 5
+                        ):
+                            process_tree.kill()
+                        continue
+                    if message is None:
+                        completed_readers += 1
+                        continue
+                    channel, line = message
+                    safe_line = redact_text(line, home=Path.home())
+                    handle = stdout_handle if channel == "stdout" else stderr_handle
+                    handle.write(safe_line)
+                    handle.flush()
+                    on_line(channel, safe_line.rstrip("\r\n"))
+            for thread in threads:
+                thread.join(timeout=1)
+            return ManagedProcessResult(
+                return_code=process.wait(timeout=5),
+                cancelled=cancelled,
+                timed_out=timed_out,
+                duration_seconds=time.monotonic() - started,
+                stdout_path=stdout_path,
+                stderr_path=stderr_path,
+            )
+        finally:
+            process_tree.close()
 
     @staticmethod
     def _read_stream(

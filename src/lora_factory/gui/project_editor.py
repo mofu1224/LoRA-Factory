@@ -32,9 +32,11 @@ from PySide6.QtWidgets import (
 from lora_factory.config.models import (
     AdvancedOverrides,
     BackendMode,
+    CodexRefinementMode,
     PresetKind,
     ProjectConfig,
     ProjectDraft,
+    TriggerWordMode,
 )
 from lora_factory.config.validation import trigger_token_collision_warning
 from lora_factory.gui.contracts import GpuView
@@ -242,6 +244,32 @@ class ProjectEditor(QWidget):
         self.preset.addItem("Style LoRA", PresetKind.STYLE)
         form.addRow("Preset *", self.preset)
 
+        self.codex_refinement_mode = QComboBox()
+        self.codex_refinement_mode.setObjectName("codexRefinementMode")
+        self.codex_refinement_mode.addItem(
+            "Apply safe changes automatically", CodexRefinementMode.AUTO
+        )
+        self.codex_refinement_mode.addItem(
+            "Review changes before training", CodexRefinementMode.REVIEW
+        )
+        form.addRow("Caption / Tag refinement", self.codex_refinement_mode)
+        self.codex_image_upload_notice = QLabel(
+            "Runtime Codex sends metadata-free, resized copies (maximum edge 2048 px) of "
+            "every accepted image to OpenAI in batches of up to 8. Originals and project "
+            "paths are not sent."
+        )
+        self.codex_image_upload_notice.setObjectName("codexImageUploadNotice")
+        self.codex_image_upload_notice.setWordWrap(True)
+        form.addRow("", self.codex_image_upload_notice)
+
+        self.trigger_word_mode = QComboBox()
+        self.trigger_word_mode.setObjectName("triggerWordMode")
+        self.trigger_word_mode.addItem("Enter manually", TriggerWordMode.MANUAL)
+        self.trigger_word_mode.addItem(
+            "Choose from Codex suggestions", TriggerWordMode.CODEX_SUGGEST
+        )
+        form.addRow("Trigger Word", self.trigger_word_mode)
+
         self.trigger_token = QLineEdit()
         self.trigger_token.setObjectName("triggerToken")
         self.trigger_token.setPlaceholderText("A unique token, without commas")
@@ -249,9 +277,11 @@ class ProjectEditor(QWidget):
         self.trigger_warning = QLabel()
         self.trigger_warning.setObjectName("triggerWarning")
         self.trigger_warning.setWordWrap(True)
-        self.trigger_warning.setStyleSheet("color: #8a4b08;")
+        self.trigger_warning.setStyleSheet("color: #b42318;")
         form.addRow("", self.trigger_warning)
         self.trigger_token.textChanged.connect(self._update_trigger_warning)
+        self.trigger_word_mode.currentIndexChanged.connect(self._update_trigger_mode)
+        self._update_trigger_mode()
 
         self.base_model = QLineEdit()
         self.base_model.setObjectName("baseModel")
@@ -355,6 +385,14 @@ class ProjectEditor(QWidget):
     def _update_trigger_warning(self, value: str) -> None:
         self.trigger_warning.setText(trigger_token_collision_warning(value) or "")
 
+    def _update_trigger_mode(self) -> None:
+        suggested = self.trigger_word_mode.currentData() == TriggerWordMode.CODEX_SUGGEST
+        self.trigger_token.setPlaceholderText(
+            "Optional initial value; choose or edit a Codex suggestion"
+            if suggested
+            else "A unique token, without commas"
+        )
+
     def set_gpus(self, values: Iterable[object]) -> None:
         for checkbox in self._gpu_checkboxes.values():
             self.gpu_layout.removeWidget(checkbox)
@@ -437,6 +475,8 @@ class ProjectEditor(QWidget):
                 lora_name=self.lora_name.text().strip(),
                 preset=self.preset.currentData(),
                 trigger_token=self.trigger_token.text(),
+                codex_refinement_mode=self.codex_refinement_mode.currentData(),
+                trigger_word_mode=self.trigger_word_mode.currentData(),
                 base_model=Path(self.base_model.text().strip()),
                 input_paths=self.input_paths(),
                 selected_gpu_uuids=self.selected_gpu_uuids(),
@@ -504,6 +544,12 @@ class ProjectEditor(QWidget):
             PresetKind.STYLE if preset.casefold() == "style" else PresetKind.CHARACTER
         )
         self.preset.setCurrentIndex(max(index, 0))
+        refinement_mode = str(read("codex_refinement_mode", CodexRefinementMode.AUTO.value))
+        refinement_index = self.codex_refinement_mode.findData(CodexRefinementMode(refinement_mode))
+        self.codex_refinement_mode.setCurrentIndex(max(refinement_index, 0))
+        trigger_mode = str(read("trigger_word_mode", TriggerWordMode.MANUAL.value))
+        trigger_mode_index = self.trigger_word_mode.findData(TriggerWordMode(trigger_mode))
+        self.trigger_word_mode.setCurrentIndex(max(trigger_mode_index, 0))
         self.trigger_token.setText(str(read("trigger_token", "")))
         self.base_model.setText(str(read("base_model", "")))
         self.output_folder.setText(str(read("output_root", read("output_folder", ""))))
@@ -532,6 +578,8 @@ class ProjectEditor(QWidget):
 
         self.lora_name.clear()
         self.preset.setCurrentIndex(0)
+        self.codex_refinement_mode.setCurrentIndex(0)
+        self.trigger_word_mode.setCurrentIndex(0)
         self.trigger_token.clear()
         self.base_model.clear()
         self.training_paths.clear()

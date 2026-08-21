@@ -1,0 +1,84 @@
+{
+  "$defs": {
+    "DatasetRefinementAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "asset_id": {
+          "type": "string"
+        },
+        "decision": {
+          "enum": [
+            "keep",
+            "replace"
+          ],
+          "type": "string"
+        },
+        "effective_tags": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "reason": {
+          "maxLength": 500,
+          "minLength": 1,
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "asset_id",
+        "decision",
+        "effective_tags",
+        "reason",
+        "confidence"
+      ],
+      "type": "object"
+    },
+    "TriggerWordCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "maxLength": 64,
+          "minLength": 1,
+          "type": "string"
+        },
+        "reason": {
+          "maxLength": 300,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "value",
+        "reason"
+      ],
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "assets": {
+      "items": {
+        "$ref": "#/$defs/DatasetRefinementAsset"
+      },
+      "type": "array"
+    },
+    "trigger_word_candidates": {
+      "items": {
+        "$ref": "#/$defs/TriggerWordCandidate"
+      },
+      "maxItems": 5,
+      "type": "array"
+    }
+  },
+  "required": [
+    "assets",
+    "trigger_word_candidates"
+  ],
+  "type": "object"
+}

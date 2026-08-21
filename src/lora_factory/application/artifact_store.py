@@ -11,6 +11,7 @@ from sqlalchemy import delete, select
 
 from lora_factory.core.context import PipelineContext
 from lora_factory.core.stage import PipelineStage
+from lora_factory.packaging.metadata import sanitize_public_metadata
 from lora_factory.project.manifest import DatasetManifest
 from lora_factory.storage.database import Database
 from lora_factory.storage.orm import (
@@ -38,6 +39,13 @@ def _relative_or_absolute(path: Path, root: Path) -> str:
         return str(resolved)
 
 
+def _path_free_mapping(value: dict[str, Any]) -> dict[str, Any]:
+    sanitized = sanitize_public_metadata(value)
+    if not isinstance(sanitized, dict):
+        raise TypeError("Sanitized audit metadata must remain a mapping")
+    return sanitized
+
+
 class ApplicationArtifactStore:
     """Idempotent per-stage projections for queryable audit/history tables."""
 
@@ -53,6 +61,29 @@ class ApplicationArtifactStore:
         handler = getattr(self, f"_persist_{stage.value.casefold()}", None)
         if callable(handler):
             handler(context, output)
+
+    def persist_codex_audit(
+        self,
+        context: PipelineContext,
+        audit: dict[str, Any],
+    ) -> None:
+        """Persist a Codex audit immediately so later stage failure cannot discard it."""
+
+        path_free = _path_free_mapping(audit)
+        call_id = str(path_free.get("call_id") or "")
+        task_type = str(path_free.get("task_type") or "")
+        if not call_id or not task_type:
+            raise ValueError("Terminal Codex audit requires call_id and task_type")
+        with self.database.session() as session:
+            session.merge(
+                CodexCallRow(
+                    id=call_id,
+                    run_id=context.run_id,
+                    task_type=task_type,
+                    audit_json=path_free,
+                    applied_changes_json={},
+                )
+            )
 
     def _persist_importing(self, context: PipelineContext, _output: dict[str, Any]) -> None:
         manifest = DatasetManifest.model_validate(read_json(context.layout.manifest))
@@ -189,6 +220,9 @@ class ApplicationArtifactStore:
     ) -> None:
         self._persist_codex(context, PipelineStage.CODEX_PRETRAIN_REVIEW, output)
 
+    def _persist_codex_refinement(self, context: PipelineContext, output: dict[str, Any]) -> None:
+        self._persist_codex(context, PipelineStage.CODEX_REFINEMENT, output)
+
     def _persist_codex_final_review(self, context: PipelineContext, output: dict[str, Any]) -> None:
         self._persist_codex(context, PipelineStage.CODEX_FINAL_REVIEW, output)
 
@@ -199,11 +233,13 @@ class ApplicationArtifactStore:
         output: dict[str, Any],
     ) -> None:
         raw_audits = output.get("audits")
-        audits = (
+        raw_mappings = (
             [dict(item) for item in raw_audits if isinstance(item, dict)]
             if isinstance(raw_audits, list)
             else [dict(output["audit"])]
         )
+        audits = [_path_free_mapping(item) for item in raw_mappings]
+        applied_changes = _path_free_mapping(dict(output.get("applied_changes", {})))
         with self.database.session() as session:
             for audit in audits:
                 task_type = str(audit.get("task_type") or stage.value.casefold())
@@ -216,7 +252,7 @@ class ApplicationArtifactStore:
                         run_id=context.run_id,
                         task_type=task_type,
                         audit_json=audit,
-                        applied_changes_json=dict(output.get("applied_changes", {})),
+                        applied_changes_json=applied_changes,
                     )
                 )
 

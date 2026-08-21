@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +8,7 @@ import pytest
 from sqlalchemy import select
 
 from lora_factory.application.service import LoRAFactoryController
+from lora_factory.codex.image_attachment import PreparedCodexImage
 from lora_factory.codex.schemas import CodexTaskType
 from lora_factory.config.models import AppSettings, BackendMode, PresetKind, ProjectConfig
 from lora_factory.core.cancellation import CancellationToken
@@ -136,10 +138,19 @@ def test_archaudit_application_oom_recovery_uses_fresh_attempt_and_advisory_code
         context: Any,
         task: CodexTaskType,
         payload: dict[str, Any],
+        *,
+        images: Sequence[PreparedCodexImage] = (),
+        allow_fallback: bool | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], str | None]:
         if task is CodexTaskType.RECOVERY:
             recovery_payloads.append(payload)
-        return original_review(context, task, payload)
+        return original_review(
+            context,
+            task,
+            payload,
+            images=images,
+            allow_fallback=allow_fallback,
+        )
 
     controller._codex_review = capture_review  # type: ignore[method-assign]
     config = ProjectConfig(

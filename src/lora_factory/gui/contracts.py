@@ -30,6 +30,12 @@ class ApplicationController(Protocol):
 
     def resume_project(self, project_id: str, emit: EventCallback) -> Mapping[str, Any]: ...
 
+    def refinement_review(self, project_id: str) -> Mapping[str, Any]: ...
+
+    def submit_refinement_review(
+        self, project_id: str, decision: Mapping[str, Any]
+    ) -> Mapping[str, Any]: ...
+
     def promote_alternative(self, project_id: str, checkpoint_id: str) -> Mapping[str, Any]: ...
 
     def copy_output(self, project_id: str, destination_kind: str) -> Mapping[str, Any]: ...
@@ -137,6 +143,13 @@ class DatasetItemView:
     included: bool = True
     thumbnail_path: Path | None = None
     categories: tuple[str, ...] = ()
+    original_tags: tuple[str, ...] = ()
+    proposed_tags: tuple[str, ...] = ()
+    draft_caption: str = ""
+    proposed_caption: str = ""
+    refinement_reason: str = ""
+    refinement_confidence: float = 0.0
+    refinement_decision: str = "accept"
 
     @classmethod
     def from_value(cls, value: object) -> DatasetItemView:
@@ -159,6 +172,13 @@ class DatasetItemView:
             included=bool(field_value(value, "included", True)),
             thumbnail_path=Path(thumb) if thumb else None,
             categories=categories,
+            original_tags=tuple(str(item) for item in field_value(value, "original_tags", ())),
+            proposed_tags=tuple(str(item) for item in field_value(value, "proposed_tags", ())),
+            draft_caption=str(field_value(value, "draft_caption", "")),
+            proposed_caption=str(field_value(value, "proposed_caption", "")),
+            refinement_reason=str(field_value(value, "reason", "")),
+            refinement_confidence=float(field_value(value, "confidence", 0.0)),
+            refinement_decision=str(field_value(value, "decision", "accept")),
         )
 
 
@@ -242,6 +262,16 @@ class UnavailableController:
 
     def resume_project(self, project_id: str, emit: EventCallback) -> Mapping[str, Any]:
         del project_id, emit
+        raise RuntimeError(self.reason)
+
+    def refinement_review(self, project_id: str) -> Mapping[str, Any]:
+        del project_id
+        raise RuntimeError(self.reason)
+
+    def submit_refinement_review(
+        self, project_id: str, decision: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        del project_id, decision
         raise RuntimeError(self.reason)
 
     def promote_alternative(self, project_id: str, checkpoint_id: str) -> Mapping[str, Any]:
