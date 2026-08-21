@@ -63,6 +63,8 @@ codex login status
 
 Codex CLIは任意のフォールバックを許可できますが、Codexによるレビューや自動化を使う場合はChatGPTアカウントでログインしてください。認証情報やAPIキーをプロジェクトへコピーする必要はありません。
 
+Runtime CodexによるDatasetのCaption / Tag refinementでは、採用された全画像について、metadataを除いた最大辺2048 pxの縮小コピーを最大8枚ずつOpenAIへ送ります。Rawや元画像、元ファイル名、プロジェクトpathは送信しません。各呼び出し後に一時JPEGを削除します。Codexは画像から確認できる不足tagをpin済みWD14語彙から追加でき、無効な追加tagは個別に拒否されます。画像準備またはCodex refinementが失敗した場合は、学習開始前に復旧可能な失敗として停止します。有効な応答でTrigger Word候補だけが3件未満の場合は`AWAITING_REVIEW`で手入力を待ちます。Dataset以外のCodex reviewは既存のフォールバック方針を維持します。画像入力のCLI引数は[Codex CLI reference](https://developers.openai.com/codex/cli/reference/)の`--image`を参照してください。
+
 ### 5) 初回起動とSetup
 
 1. 展開先の`LoRA Factory.exe`を起動します。
@@ -79,7 +81,7 @@ Setupでは、アプリ内Python 3.12、uv、Git、Codex CLIと認証、NVIDIA�
 
 1. `LoRA Name`: 完成する`.safetensors`の名前を入力して`Add Project`を押します。
 2. `Preset`: 人物の同一性は`Character`、絵柄は`Style`を選びます。
-3. `Trigger Token`: LoRAを呼び出す固有のトークンを決めます。
+3. `Trigger Word`: LoRAを呼び出す、一般的なDanbooru tagと衝突しない固有のトークンを決めます。
 4. `Base Model`: SDXL / Illustrious互換の`.safetensors`を指定します。
 5. `Images / Folders`: 学習画像を複数選択するか、画像フォルダーを指定します。
 6. `GPU Pool`: 使用を許可するGPU UUIDだけを選択します。選択していないGPUは使用されません。
@@ -117,7 +119,7 @@ SettingsでAUTOMATIC1111、Forge、ComfyUIのrootまたはLoRAフォルダーを
 ### 9) よくある問題
 
 - Setupの`uv`または`Git`が赤い: PowerShellを開き直し、`git --version`と`uv --version`を確認してからアプリを再起動します。
-- Codexが赤い: `codex login status`を実行し、未ログインなら`codex`から`Sign in with ChatGPT`を実行します。フォールバック許可時は決定論的reviewへ移行できます。
+- Codexが赤い: `codex login status`を実行し、未ログインなら`codex`から`Sign in with ChatGPT`を実行します。Datasetの画像refinementは復旧後にResumeします。Dataset以外のCodex reviewは、フォールバック許可時に決定論的reviewへ移行できます。
 - Managed Training Runtimeが`NOT READY`: Setupの`Repair`を再実行し、約15 GiB以上の空き容量とインターネット接続を確認します。
 - GPUが見つからない: NVIDIAドライバーを更新し、`nvidia-smi`が成功することを確認してからアプリを再起動します。
 - `Application Services`やDLLエラー: 展開先の`install_vcredist.cmd`を再実行し、完了後にWindowsを再起動します。
@@ -141,7 +143,7 @@ SettingsでAUTOMATIC1111、Forge、ComfyUIのrootまたはLoRAフォルダーを
 
 - `dataset/raw/` は原則変更しない（破壊しない）
 - 画像は検証付きコピーで管理し、派生データとして保存
-- 原画像や重み、トークン情報は API へ不用意に送らない
+- DatasetのRuntime Codex refinementでは、採用画像のmetadataを除いた縮小コピーだけをOpenAIへ送る
 - 監査ログや診断情報は最小化し、外部に秘匿情報が残らないよう制御
 
 ---

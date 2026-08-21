@@ -16,6 +16,10 @@ Maintainers will acknowledge a complete report as soon as practical, validate it
 
 - Source images and each project's `dataset/raw/` are immutable inputs.
 - External commands use argument arrays without a shell.
-- Runtime Codex receives allowlisted structured metadata in a dedicated read-only scratch repository; raw images and secrets are not supplied.
-- Final package metadata removes absolute paths, original filenames, command arguments, and physical GPU UUIDs.
+- Runtime Codex dataset refinement receives allowlisted structured metadata and metadata-free, resized JPEG copies of every accepted image, in batches of at most eight. Raw/original images, original filenames, project paths, and secrets are not supplied. Scratch JPEGs are deleted after every call.
+- Codex may add visually supported tags only from the pinned WD14 vocabulary. Unknown, forbidden, duplicate, separator-bearing, and over-limit additions are rejected individually before captions or Training can consume them.
+- Dataset image preparation or Codex refinement failure stops Training recoverably; other Codex review tasks retain their configured fallback behavior.
+- Trigger Words that collide with common Danbooru tags and invalid review edits are rejected before atomic approval save and again before Training.
+- Final package metadata removes absolute paths, original filenames, command arguments, physical GPU UUIDs, and scratch image files while retaining only the image profile, counts, hashes, batch input hashes, and cleanup status needed for reproducibility.
+- The image attachment uses the Codex CLI [`--image` reference](https://developers.openai.com/codex/cli/reference/).
 - Model files and third-party runtimes remain subject to their own provenance and license requirements.

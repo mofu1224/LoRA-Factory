@@ -13,6 +13,7 @@ class StrictModel(BaseModel):
 
 
 class CodexTaskType(StrEnum):
+    DATASET_REFINEMENT = "dataset_refinement"
     DATASET_REVIEW = "dataset_review"
     CAPTION_REVIEW = "caption_review"
     TRAINING_PLAN = "training_plan"
@@ -34,6 +35,24 @@ class CaptionReview(StrictModel):
     warnings: tuple[str, ...] = ()
     reason_summary: str
     confidence: Annotated[float, Field(ge=0, le=1)]
+
+
+class DatasetRefinementAsset(StrictModel):
+    asset_id: str
+    decision: Literal["keep", "replace"]
+    effective_tags: tuple[str, ...]
+    reason: Annotated[str, Field(min_length=1, max_length=500)]
+    confidence: Annotated[float, Field(ge=0, le=1)]
+
+
+class TriggerWordCandidate(StrictModel):
+    value: Annotated[str, Field(min_length=1, max_length=64)]
+    reason: Annotated[str, Field(min_length=1, max_length=300)]
+
+
+class DatasetRefinementResponse(StrictModel):
+    assets: tuple[DatasetRefinementAsset, ...]
+    trigger_word_candidates: Annotated[tuple[TriggerWordCandidate, ...], Field(max_length=5)] = ()
 
 
 class ProposedChange(StrictModel):
@@ -87,9 +106,17 @@ class FinalReview(StrictModel):
     numeric_ranking_overridden: Literal[False] = False
 
 
-CodexResponse = DatasetReview | CaptionReview | TrainingPlanReview | RecoveryReview | FinalReview
+CodexResponse = (
+    DatasetRefinementResponse
+    | DatasetReview
+    | CaptionReview
+    | TrainingPlanReview
+    | RecoveryReview
+    | FinalReview
+)
 
 SCHEMA_MODELS: dict[CodexTaskType, type[StrictModel]] = {
+    CodexTaskType.DATASET_REFINEMENT: DatasetRefinementResponse,
     CodexTaskType.DATASET_REVIEW: DatasetReview,
     CodexTaskType.CAPTION_REVIEW: CaptionReview,
     CodexTaskType.TRAINING_PLAN: TrainingPlanReview,

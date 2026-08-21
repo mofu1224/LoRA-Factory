@@ -85,8 +85,9 @@ class RuntimeManager:
         git_executable = shutil.which("git")
         if git_executable is None:
             return None
+        safe_directory = str(self.layout.sd_scripts.resolve(strict=False))
         completed = subprocess.run(  # noqa: S603 - executable resolved; fixed read-only query.
-            [git_executable, "rev-parse", "HEAD"],
+            [git_executable, "-c", f"safe.directory={safe_directory}", "rev-parse", "HEAD"],
             cwd=self.layout.sd_scripts,
             shell=False,
             capture_output=True,

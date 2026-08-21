@@ -7,6 +7,8 @@ from typing import Any
 from lora_factory.codex.schemas import (
     CaptionReview,
     CodexTaskType,
+    DatasetRefinementAsset,
+    DatasetRefinementResponse,
     DatasetReview,
     FinalReview,
     RecoveryReview,
@@ -17,6 +19,25 @@ from lora_factory.codex.schemas import (
 
 def deterministic_fallback(task_type: CodexTaskType, payload: dict[str, Any]) -> StrictModel:
     warning = "Runtime Codex was unavailable; deterministic policy was used."
+    if task_type is CodexTaskType.DATASET_REFINEMENT:
+        raw_assets = payload.get("assets", ())
+        assets = raw_assets if isinstance(raw_assets, list) else []
+        return DatasetRefinementResponse(
+            assets=tuple(
+                DatasetRefinementAsset(
+                    asset_id=str(item.get("asset_id", "")),
+                    decision="keep",
+                    effective_tags=tuple(str(tag) for tag in item.get("effective_tags", ())),
+                    reason="Deterministic source tags were preserved without model judgment.",
+                    confidence=1.0,
+                )
+                for item in sorted(
+                    (item for item in assets if isinstance(item, dict)),
+                    key=lambda item: str(item.get("asset_id", "")),
+                )
+            ),
+            trigger_word_candidates=(),
+        )
     if task_type is CodexTaskType.DATASET_REVIEW:
         hard_gate_passed = bool(payload.get("hard_gate_passed", False))
         return DatasetReview(

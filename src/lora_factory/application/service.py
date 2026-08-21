@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -23,11 +25,28 @@ from sqlalchemy import select
 from lora_factory import __version__
 from lora_factory.application.artifact_store import ApplicationArtifactStore
 from lora_factory.application.progress_reporting import progress_details
+from lora_factory.application.refinement_review import (
+    RefinementApproval,
+    RefinementReviewItem,
+    RefinementReviewState,
+    refinement_fingerprint,
+)
 from lora_factory.application.setup_status import build_setup_checks
 from lora_factory.caption.audit import audit_captions
-from lora_factory.caption.character_policy import build_character_captions
 from lora_factory.caption.managed_wd14 import ManagedWD14Tagger
-from lora_factory.caption.style_policy import build_style_captions
+from lora_factory.caption.refinement import (
+    AssetRefinementProposal,
+    CaptionDraftAsset,
+    CaptionDraftBatch,
+    RefinementDecisionKind,
+    TriggerCandidate,
+    batch_refinement_assets,
+    build_caption_drafts,
+    finalize_captions,
+    normalize_trigger_candidates,
+    validate_refinement_proposals,
+)
+from lora_factory.caption.tag_vocabulary import WD14TagVocabulary
 from lora_factory.caption.tagger import (
     FakeTagger,
     ImageTagResult,
@@ -38,12 +57,19 @@ from lora_factory.caption.tagger import (
 from lora_factory.caption.writer import CaptionWriter
 from lora_factory.codex.allowlist import validate_recovery_changes
 from lora_factory.codex.fallback import deterministic_fallback
-from lora_factory.codex.gateway import CodexGateway
-from lora_factory.codex.schemas import CodexTaskType
+from lora_factory.codex.gateway import CodexCallCancelled, CodexCallError, CodexGateway
+from lora_factory.codex.image_attachment import (
+    DEFAULT_CODEX_IMAGE_PROFILE,
+    PreparedCodexImage,
+    prepare_codex_image,
+    remove_codex_images,
+)
+from lora_factory.codex.schemas import CodexTaskType, DatasetRefinementResponse
 from lora_factory.config.loader import dump_yaml_mapping, load_yaml_mapping
 from lora_factory.config.models import (
     AppSettings,
     BackendMode,
+    CodexRefinementMode,
     DatasetStatistics,
     DestinationConfig,
     DestinationKind,
@@ -52,13 +78,14 @@ from lora_factory.config.models import (
     ProjectConfig,
     ProjectDraft,
     TrainingPlan,
+    TriggerWordMode,
 )
 from lora_factory.core.cancellation import CancellationToken, CancelledError
 from lora_factory.core.context import PipelineContext
 from lora_factory.core.events import EventBus, PipelineEvent
 from lora_factory.core.exceptions import ErrorClassification, PipelineError
 from lora_factory.core.pipeline import PipelineEngine, StageDefinition
-from lora_factory.core.stage import PipelineStage, RunStatus
+from lora_factory.core.stage import PipelineStage, RunStatus, StageStatus
 from lora_factory.dataset.diversity import analyze_diversity
 from lora_factory.dataset.duplicates import DuplicateCandidate, detect_duplicates
 from lora_factory.dataset.embedding_review import (
@@ -66,6 +93,7 @@ from lora_factory.dataset.embedding_review import (
     combine_duplicate_cluster_ids,
 )
 from lora_factory.dataset.image_normalizer import normalize_image
+from lora_factory.dataset.ontology import DEFAULT_ONTOLOGY
 from lora_factory.dataset.quality import (
     DatasetGateThresholds,
     QualityAssessment,
@@ -114,7 +142,7 @@ from lora_factory.sampling.fake_backend import FakeSampler
 from lora_factory.sampling.grid import render_grid
 from lora_factory.sampling.prompts import BenchmarkPrompt, load_benchmark_prompts
 from lora_factory.storage.database import Database
-from lora_factory.storage.orm import DestinationRow, EventRow, ProjectRow, RunRow
+from lora_factory.storage.orm import DestinationRow, EventRow, ProjectRow, RunRow, StageRow
 from lora_factory.storage.repositories import StageRepository
 from lora_factory.training.backend import TrainingBackend, TrainingProgress, TrainingRequest
 from lora_factory.training.batch_probe import (
@@ -136,10 +164,32 @@ from lora_factory.training.planner import plan_training, plan_validation_split
 from lora_factory.training.profiles import load_preset_profile
 from lora_factory.training.recovery import RecoveryDecision, next_recovery
 from lora_factory.training.resume import prepare_training_attempt, training_request_fingerprint
+from lora_factory.util.hashing import sha256_file
 from lora_factory.util.json import read_json, write_json_atomic
 from lora_factory.util.redaction import redact_text
 
 EventCallback = Callable[[dict[str, Any]], None]
+
+_REFINEMENT_MAX_ITEMS = 8
+_REFINEMENT_DRAFT_BYTES = 120 * 1024
+_REFINEMENT_PAYLOAD_BYTES = 128 * 1024
+
+
+def remove_empty_image_root(image_root: Path, *, boundary: Path) -> None:
+    """Remove an empty per-batch image tree without crossing its runtime boundary."""
+
+    resolved_boundary = boundary.resolve(strict=False)
+    current = image_root.resolve(strict=False)
+    if current == resolved_boundary or not current.is_relative_to(resolved_boundary):
+        raise ValueError("Codex image root is outside its runtime boundary")
+    while current != resolved_boundary:
+        try:
+            current.rmdir()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            break
+        current = current.parent
 
 
 @dataclass(frozen=True, slots=True)
@@ -531,6 +581,97 @@ class LoRAFactoryController:
         payload[asset_id] = item
         write_json_atomic(path, payload)
 
+    def refinement_review(self, project_id: str) -> Mapping[str, Any]:
+        """Load the latest durable Runtime Codex review without exposing project paths."""
+
+        layout = self.projects.layout_for(project_id)
+        database = Database(layout.database)
+        database.initialize()
+        with database.session() as session:
+            latest = session.scalar(select(RunRow).order_by(RunRow.created_at.desc()).limit(1))
+        if latest is None or latest.status != RunStatus.AWAITING_REVIEW.value:
+            raise ValueError("The project has no run awaiting refinement review")
+        path = layout.run(latest.id).root / "refinement-review.json"
+        return RefinementReviewState.model_validate(read_json(path)).model_dump(mode="json")
+
+    def submit_refinement_review(
+        self,
+        project_id: str,
+        decision: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        """Atomically save a validated approval for the latest waiting run."""
+
+        layout = self.projects.layout_for(project_id)
+        database = Database(layout.database)
+        database.initialize()
+        with database.session() as session:
+            latest = session.scalar(select(RunRow).order_by(RunRow.created_at.desc()).limit(1))
+        if latest is None or latest.status != RunStatus.AWAITING_REVIEW.value:
+            raise ValueError("The project has no run awaiting refinement review")
+        run_root = layout.run(latest.id).root
+        review = RefinementReviewState.model_validate(
+            read_json(run_root / "refinement-review.json")
+        )
+        approval = RefinementApproval.model_validate(decision)
+        if approval.upstream_fingerprint != review.upstream_fingerprint:
+            raise ValueError("The refinement approval is stale; reload the current review")
+        expected = {item.asset_id for item in review.items}
+        received = [item.asset_id for item in approval.items]
+        if len(received) != len(set(received)) or set(received) - expected:
+            raise ValueError("Refinement approval contains duplicate or unknown assets")
+        if review.requires_refinement_review and set(received) != expected:
+            raise ValueError("Refinement approval must decide every accepted asset")
+        snapshot_config = latest.snapshot_json.get("config")
+        if not isinstance(snapshot_config, dict):
+            raise ValueError("The waiting run has no valid project snapshot")
+        config = ProjectConfig.model_validate(snapshot_config)
+        with database.session() as session:
+            draft_output = self._successful_stage_output(
+                session,
+                latest.id,
+                PipelineStage.CAPTION_DRAFTING,
+            )
+            refinement_output = self._successful_stage_output(
+                session,
+                latest.id,
+                PipelineStage.CODEX_REFINEMENT,
+            )
+        self._validate_refinement_approval_values(
+            config=config,
+            review=review,
+            approval=approval,
+            drafts=CaptionDraftBatch.model_validate(draft_output),
+            refinement=refinement_output,
+            vocabulary=self._refinement_vocabulary_for_config(config),
+        )
+        write_json_atomic(run_root / "refinement-approval.json", approval.model_dump(mode="json"))
+        return {
+            "project_id": project_id,
+            "run_id": latest.id,
+            "status": RunStatus.AWAITING_REVIEW.value,
+            "approval_saved": True,
+        }
+
+    @staticmethod
+    def _successful_stage_output(
+        session: Any,
+        run_id: str,
+        stage: PipelineStage,
+    ) -> dict[str, Any]:
+        row = session.scalar(
+            select(StageRow)
+            .where(
+                StageRow.run_id == run_id,
+                StageRow.stage == stage.value,
+                StageRow.status == StageStatus.SUCCEEDED.value,
+            )
+            .order_by(StageRow.attempt.desc())
+            .limit(1)
+        )
+        if row is None or not isinstance(row.output_json, dict):
+            raise ValueError(f"Waiting run is missing successful {stage.value} output")
+        return dict(row.output_json)
+
     def copy_output(self, project_id: str, destination_kind: str) -> Mapping[str, Any]:
         completion = self._completion(project_id)
         source = Path(str(completion["final_model"]))
@@ -742,7 +883,72 @@ class LoRAFactoryController:
             on_stage_success=ApplicationArtifactStore(database).persist,
         )
         try:
-            result = engine.execute(context, self._stages(context))
+            stages = self._stages(context)
+            barrier = next(
+                index
+                for index, definition in enumerate(stages)
+                if definition.stage is PipelineStage.CODEX_REFINEMENT
+            )
+            engine.execute(context, stages[: barrier + 1])
+            review = self._prepare_refinement_review(context)
+            approval_path = run_layout.root / "refinement-approval.json"
+            approval: RefinementApproval | None = None
+            if approval_path.is_file():
+                approval = RefinementApproval.model_validate(read_json(approval_path))
+                if approval.upstream_fingerprint != review.upstream_fingerprint:
+                    approval = None
+            if (review.requires_refinement_review or review.requires_trigger_selection) and (
+                approval is None
+            ):
+                write_json_atomic(
+                    run_layout.root / "refinement-review.json",
+                    review.model_dump(mode="json"),
+                )
+                with database.session() as session:
+                    row = session.get(RunRow, run_id)
+                    if row is not None:
+                        row.status = RunStatus.AWAITING_REVIEW.value
+                        row.current_stage = PipelineStage.CODEX_REFINEMENT.value
+                        row.error_json = None
+                bus.publish(
+                    PipelineEvent(
+                        event_type="awaiting_review",
+                        stage=PipelineStage.CODEX_REFINEMENT.value,
+                        message="Trigger Word or caption/tag approval is required before training",
+                        progress=(barrier + 1) / len(stages),
+                        details={
+                            "run_id": run_id,
+                            "requires_trigger_selection": review.requires_trigger_selection,
+                            "requires_refinement_review": review.requires_refinement_review,
+                        },
+                    )
+                )
+                return {
+                    "project_id": config.project_id,
+                    "run_id": run_id,
+                    "status": RunStatus.AWAITING_REVIEW.value,
+                    "requires_trigger_selection": review.requires_trigger_selection,
+                    "requires_refinement_review": review.requires_refinement_review,
+                }
+            if approval is None:
+                approval = RefinementApproval(
+                    upstream_fingerprint=review.upstream_fingerprint,
+                    trigger_word=config.trigger_token,
+                )
+            self._apply_refinement_approval(context, review, approval)
+            if run_snapshot.get("confirmed_trigger_word") != approval.trigger_word:
+                run_snapshot = {
+                    **run_snapshot,
+                    "confirmed_trigger_word": approval.trigger_word,
+                    "refinement_approval_fingerprint": approval.upstream_fingerprint,
+                }
+                dump_yaml_mapping(snapshot_path, run_snapshot)
+                dump_yaml_mapping(layout.run_snapshot, run_snapshot)
+                with database.session() as session:
+                    row = session.get(RunRow, run_id)
+                    if row is not None:
+                        row.snapshot_json = run_snapshot
+            result = engine.execute(context, stages[barrier + 1 :])
             ready = result.outputs[PipelineStage.READY.value]
             with database.session() as session:
                 row = session.get(RunRow, run_id)
@@ -816,6 +1022,30 @@ class LoRAFactoryController:
                 backend_versions=backend_versions,
             )
 
+        def refinement_inputs(ctx: PipelineContext) -> Mapping[str, Any]:
+            try:
+                accepted = {
+                    str(value)
+                    for value in ctx.artifacts.get(PipelineStage.DEDUPLICATING.value, {}).get(
+                        "accepted_asset_ids", ()
+                    )
+                }
+                normalized = ctx.artifacts.get(PipelineStage.NORMALIZING.value, {}).get("items", ())
+                working_sha256s = {
+                    str(item["asset_id"]): sha256_file(Path(str(item["path"])))
+                    for item in normalized
+                    if str(item["asset_id"]) in accepted
+                }
+                return {
+                    PipelineStage.CAPTION_DRAFTING.value: ctx.artifacts.get(
+                        PipelineStage.CAPTION_DRAFTING.value, {}
+                    ),
+                    "accepted_asset_ids": sorted(accepted),
+                    "working_sha256s": working_sha256s,
+                }
+            except Exception as exc:
+                raise self._refinement_pipeline_error(exc) from exc
+
         return (
             definition(PipelineStage.IMPORTING, self._import_stage),
             definition(
@@ -839,9 +1069,21 @@ class LoRAFactoryController:
                 (PipelineStage.DEDUPLICATING,),
             ),
             definition(
+                PipelineStage.CAPTION_DRAFTING,
+                self._caption_draft_stage,
+                (PipelineStage.TAGGING, PipelineStage.DEDUPLICATING),
+            ),
+            StageDefinition(
+                stage=PipelineStage.CODEX_REFINEMENT,
+                version="2",
+                resolve_inputs=refinement_inputs,
+                run=self._codex_refinement_stage,
+                backend_versions=backend_versions,
+            ),
+            definition(
                 PipelineStage.CAPTIONING,
                 self._caption_stage,
-                (PipelineStage.TAGGING,),
+                (PipelineStage.CAPTION_DRAFTING, PipelineStage.CODEX_REFINEMENT),
             ),
             definition(
                 PipelineStage.DATASET_REVIEW,
@@ -1416,7 +1658,7 @@ class LoRAFactoryController:
             "results": [result.model_dump(mode="json") for result in results],
         }
 
-    def _caption_stage(self, context: PipelineContext) -> dict[str, Any]:
+    def _caption_draft_stage(self, context: PipelineContext) -> dict[str, Any]:
         tag_output = _stage_output(context, PipelineStage.TAGGING)
         image_tags = {
             item["asset_id"]: tuple(
@@ -1425,24 +1667,719 @@ class LoRAFactoryController:
             for item in tag_output["results"]
         }
         cluster_ids = _stage_output(context, PipelineStage.DEDUPLICATING)["cluster_ids"]
-        class_token: str | None = None
-        invariants: tuple[str, ...] = ()
-        if context.config.preset is PresetKind.CHARACTER:
-            batch = build_character_captions(
-                context.config.trigger_token,
-                image_tags,
-                duplicate_cluster_ids=cluster_ids,
+        return build_caption_drafts(
+            context.config.preset,
+            image_tags,
+            duplicate_cluster_ids=cluster_ids,
+        ).model_dump(mode="json")
+
+    def _codex_refinement_stage(self, context: PipelineContext) -> dict[str, Any]:
+        try:
+            return self._run_codex_refinement_stage(context)
+        except CancelledError:
+            raise
+        except Exception as exc:
+            raise self._refinement_pipeline_error(exc) from exc
+
+    @staticmethod
+    def _refinement_pipeline_error(exc: Exception) -> PipelineError:
+        reason = redact_text(str(exc), home=Path.home())
+        sanitized = sanitize_public_metadata(reason)
+        if not isinstance(sanitized, str):
+            sanitized = type(exc).__name__
+        sanitized = " ".join(sanitized.split())[:1000] or type(exc).__name__
+        return PipelineError(
+            f"Runtime Codex image refinement failed: {sanitized}",
+            recoverable=True,
+        )
+
+    def _run_codex_refinement_stage(self, context: PipelineContext) -> dict[str, Any]:
+        drafts = CaptionDraftBatch.model_validate(
+            _stage_output(context, PipelineStage.CAPTION_DRAFTING)
+        )
+        normalized_items = _stage_output(context, PipelineStage.NORMALIZING)["items"]
+        normalized_by_asset: dict[str, dict[str, Any]] = {}
+        for raw_item in normalized_items:
+            normalized_item = dict(raw_item)
+            asset_id = str(normalized_item["asset_id"])
+            if asset_id in normalized_by_asset:
+                raise ValueError(f"Normalized image mapping contains duplicate asset {asset_id}")
+            normalized_by_asset[asset_id] = normalized_item
+        accepted_ids = {
+            str(value)
+            for value in _stage_output(context, PipelineStage.DEDUPLICATING)["accepted_asset_ids"]
+        }
+        draft_ids = set(drafts.assets)
+        if draft_ids != accepted_ids:
+            raise ValueError("Caption drafts do not exactly cover accepted normalized images")
+        normalized_by_asset = {
+            asset_id: normalized_by_asset[asset_id]
+            for asset_id in sorted(draft_ids)
+            if asset_id in normalized_by_asset
+        }
+        if set(normalized_by_asset) != draft_ids:
+            raise ValueError("Normalized image mapping does not exactly cover caption drafts")
+
+        vocabulary = self._refinement_vocabulary(context)
+        batches = batch_refinement_assets(
+            tuple(drafts.assets.values()),
+            max_items=_REFINEMENT_MAX_ITEMS,
+            max_bytes=_REFINEMENT_DRAFT_BYTES,
+        )
+        decisions: dict[str, Any] = {}
+        effective_tags: dict[str, list[str]] = {}
+        added_tags: dict[str, list[str]] = {}
+        removed_tags: dict[str, list[str]] = {}
+        image_sha256s: dict[str, str] = {}
+        working_sha256s: dict[str, str] = {}
+        candidate_values: list[TriggerCandidate] = []
+        audits: list[dict[str, Any]] = []
+        warnings: list[str] = []
+        fallback_used = False
+        record_root = context.layout.run(context.run_id).root / "codex-refinement"
+        total_image_count = len(drafts.assets)
+        prepared_before_batch = 0
+
+        for batch_index, batch in enumerate(batches):
+            batch_key = f"{context.run_id}-batch-{batch_index:04d}"
+            image_root = self.settings.codex_runtime_root / "input" / "images" / batch_key
+            record_path = record_root / f"batch-{batch_index:04d}.json"
+            prepared: list[PreparedCodexImage] = []
+            validated = None
+            response: DatasetRefinementResponse | None = None
+            audit: dict[str, Any] = {}
+            warning: str | None = None
+            reused = False
+            input_hash = ""
+            try:
+                prepared.extend(
+                    self._prepare_codex_images_with_two_attempts(
+                        context,
+                        batch,
+                        normalized_by_asset,
+                        image_root,
+                        batch_index=batch_index,
+                        batch_count=len(batches),
+                        prepared_before_batch=prepared_before_batch,
+                        total_image_count=total_image_count,
+                    )
+                )
+                payload = self._refinement_payload(
+                    context,
+                    batch,
+                    prepared,
+                    vocabulary,
+                    batch_index=batch_index,
+                    batch_count=len(batches),
+                )
+                encoded = json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                if len(encoded) > _REFINEMENT_PAYLOAD_BYTES:
+                    raise ValueError(
+                        f"Sanitized refinement batch exceeds {_REFINEMENT_PAYLOAD_BYTES} bytes"
+                    )
+                input_hash = refinement_fingerprint(payload)
+                cached = self._load_matching_refinement_batch(
+                    record_path,
+                    input_hash,
+                    prepared,
+                )
+                if cached is not None:
+                    response_json, audit, warning = cached
+                    reused = True
+                    self._publish_codex_batch_progress(
+                        context,
+                        batch_index=batch_index,
+                        batch_count=len(batches),
+                        action="cache_hit",
+                        attempt=0,
+                    )
+                    sanitized_response = sanitize_public_metadata(response_json)
+                    if not isinstance(sanitized_response, dict):
+                        raise ValueError("Sanitized Runtime Codex response is not a mapping")
+                    response = DatasetRefinementResponse.model_validate(sanitized_response)
+                    proposals = tuple(
+                        AssetRefinementProposal.model_validate(item.model_dump(mode="json"))
+                        for item in response.assets
+                    )
+                    subset = drafts.model_copy(
+                        update={"assets": {item.asset_id: item for item in batch}}
+                    )
+                    validated = validate_refinement_proposals(
+                        subset,
+                        proposals,
+                        vocabulary=vocabulary,
+                    )
+                else:
+                    last_contract_error: ValueError | None = None
+                    for contract_attempt in range(1, 3):
+                        self._publish_codex_batch_progress(
+                            context,
+                            batch_index=batch_index,
+                            batch_count=len(batches),
+                            action="call" if contract_attempt == 1 else "retry",
+                            attempt=contract_attempt,
+                        )
+                        response_json, audit, warning = self._codex_review(
+                            context,
+                            CodexTaskType.DATASET_REFINEMENT,
+                            payload,
+                            images=prepared,
+                            allow_fallback=False,
+                        )
+                        try:
+                            sanitized_response = sanitize_public_metadata(response_json)
+                            if not isinstance(sanitized_response, dict):
+                                raise ValueError(
+                                    "Sanitized Runtime Codex response is not a mapping"
+                                )
+                            response = DatasetRefinementResponse.model_validate(sanitized_response)
+                            proposals = tuple(
+                                AssetRefinementProposal.model_validate(item.model_dump(mode="json"))
+                                for item in response.assets
+                            )
+                            subset = drafts.model_copy(
+                                update={"assets": {item.asset_id: item for item in batch}}
+                            )
+                            validated = validate_refinement_proposals(
+                                subset,
+                                proposals,
+                                vocabulary=vocabulary,
+                            )
+                        except ValueError as exc:
+                            last_contract_error = exc
+                            continue
+                        break
+                    if validated is None or response is None:
+                        raise last_contract_error or ValueError(
+                            f"Batch {batch_index} failed the Runtime Codex asset contract"
+                        )
+
+                path_free_audit = sanitize_public_metadata(audit)
+                if not isinstance(path_free_audit, dict):
+                    raise ValueError("Sanitized Runtime Codex audit is not a mapping")
+                audit = {
+                    **path_free_audit,
+                    "batch_index": batch_index,
+                    "input_hash": input_hash,
+                    "payload_byte_count": len(encoded),
+                }
+                if reused:
+                    audit["reused"] = True
+                audits.append(audit)
+                fallback_used = fallback_used or bool(audit.get("fallback_used", False))
+                path_free_warning: str | None = None
+                if warning:
+                    sanitized_warning = sanitize_public_metadata(
+                        redact_text(warning, home=Path.home())
+                    )
+                    path_free_warning = (
+                        sanitized_warning
+                        if isinstance(sanitized_warning, str)
+                        else "Runtime Codex returned a warning"
+                    )
+                    warnings.append(f"batch {batch_index}: {path_free_warning}")
+                candidate_values.extend(
+                    TriggerCandidate.model_validate(item.model_dump(mode="json"))
+                    for item in response.trigger_word_candidates
+                )
+                if not reused:
+                    write_json_atomic(
+                        record_path,
+                        {
+                            "schema_version": 1,
+                            "complete": True,
+                            "input_hash": input_hash,
+                            "payload_byte_count": len(encoded),
+                            "image_profile": prepared[0].profile.model_dump(mode="json"),
+                            "image_sha256s": [item.output_sha256 for item in prepared],
+                            "working_sha256s": [item.source_sha256 for item in prepared],
+                            "response": response.model_dump(mode="json"),
+                            "audit": audit,
+                            "warning": path_free_warning,
+                        },
+                    )
+                for item in prepared:
+                    image_sha256s[item.asset_id] = item.output_sha256
+                    working_sha256s[item.asset_id] = item.source_sha256
+            finally:
+                remove_codex_images(prepared, scratch_root=image_root)
+                remove_empty_image_root(
+                    image_root,
+                    boundary=self.settings.codex_runtime_root,
+                )
+
+            if validated is None:
+                raise ValueError(f"Batch {batch_index} did not produce validated decisions")
+            for asset_id, decision in validated.decisions.items():
+                decisions[asset_id] = decision.model_dump(mode="json")
+                effective = tuple(validated.effective_tags[asset_id])
+                effective_tags[asset_id] = list(effective)
+                original = tuple(drafts.assets[asset_id].original_tags)
+                original_set = set(original)
+                effective_set = set(effective)
+                added_tags[asset_id] = [tag for tag in effective if tag not in original_set]
+                removed_tags[asset_id] = [tag for tag in original if tag not in effective_set]
+            prepared_before_batch += len(batch)
+
+        if (
+            context.config.backend_mode is BackendMode.FAKE
+            and context.config.trigger_word_mode is TriggerWordMode.CODEX_SUGGEST
+        ):
+            seed = hashlib.sha256(context.config.project_id.encode("utf-8")).hexdigest()[:8]
+            candidate_values.extend(
+                TriggerCandidate(
+                    value=f"lfx_{seed}_{suffix}",
+                    reason="Deterministic Fake backend Trigger Word candidate.",
+                )
+                for suffix in ("nova", "ember", "quartz", "cobalt")
             )
-            captions = batch.captions
-            keep_tokens = batch.keep_tokens
-            class_token = batch.class_token.token
-            invariants = batch.invariants.selected_tags
-            warnings = batch.warnings
-        else:
-            style_batch = build_style_captions(context.config.trigger_token, image_tags)
-            captions = style_batch.captions
-            keep_tokens = style_batch.keep_tokens
-            warnings = style_batch.warnings
+        candidates: tuple[TriggerCandidate, ...] = ()
+        if candidate_values:
+            try:
+                candidates = normalize_trigger_candidates(candidate_values)
+            except ValueError as exc:
+                warnings.append(str(exc))
+        return {
+            "effective_tags": effective_tags,
+            "decisions": decisions,
+            "added_tags": added_tags,
+            "removed_tags": removed_tags,
+            "trigger_candidates": [item.model_dump(mode="json") for item in candidates],
+            "audits": audits,
+            "warnings": warnings,
+            "fallback_used": fallback_used,
+            "batch_count": len(batches),
+            "chunk_count": len(batches),
+            "image_profile": DEFAULT_CODEX_IMAGE_PROFILE.model_dump(mode="json"),
+            "image_sha256s": image_sha256s,
+            "working_sha256s": working_sha256s,
+            "ordered_image_hashes": [image_sha256s[asset_id] for asset_id in sorted(image_sha256s)],
+            "cleanup_status": "removed_after_each_call",
+        }
+
+    def _refinement_vocabulary(self, context: PipelineContext) -> WD14TagVocabulary:
+        return self._refinement_vocabulary_for_config(context.config)
+
+    def _refinement_vocabulary_for_config(
+        self,
+        config: ProjectConfig,
+    ) -> WD14TagVocabulary:
+        if config.backend_mode is BackendMode.FAKE:
+            return WD14TagVocabulary.fake()
+        return WD14TagVocabulary.from_csv(self.runtime.layout.wd14 / "selected_tags.csv")
+
+    def _prepare_codex_images_with_two_attempts(
+        self,
+        context: PipelineContext,
+        batch: Sequence[CaptionDraftAsset],
+        normalized_by_asset: Mapping[str, Mapping[str, Any]],
+        image_root: Path,
+        *,
+        batch_index: int,
+        batch_count: int,
+        prepared_before_batch: int,
+        total_image_count: int,
+    ) -> tuple[PreparedCodexImage, ...]:
+        for attempt in range(1, 3):
+            partial: list[PreparedCodexImage] = []
+            try:
+                for image_index, draft in enumerate(batch, start=1):
+                    context.cancellation.raise_if_cancelled()
+                    item = normalized_by_asset.get(draft.asset_id)
+                    if item is None:
+                        raise ValueError(
+                            f"Normalized image is missing for draft asset {draft.asset_id}"
+                        )
+                    source_path = Path(str(item["path"])).resolve(strict=True)
+                    expected_source = (context.layout.working / f"{draft.asset_id}.png").resolve(
+                        strict=True
+                    )
+                    if source_path != expected_source:
+                        raise ValueError("Normalized asset/image mapping does not match")
+                    self._publish_codex_image_progress(
+                        context,
+                        batch_index=batch_index,
+                        batch_count=batch_count,
+                        image_index=image_index,
+                        image_count=len(batch),
+                        images_current=prepared_before_batch + image_index,
+                        images_total=total_image_count,
+                        asset_id=draft.asset_id,
+                        action="preparing",
+                        attempt=attempt,
+                    )
+                    prepared = prepare_codex_image(
+                        draft.asset_id,
+                        source_path,
+                        image_root,
+                    )
+                    partial.append(prepared)
+                    prepared = PreparedCodexImage.model_validate(prepared.model_dump(mode="python"))
+                    if prepared.asset_id != draft.asset_id:
+                        raise ValueError("Prepared image asset mapping does not match its draft")
+                    partial[-1] = prepared
+                    self._publish_codex_image_progress(
+                        context,
+                        batch_index=batch_index,
+                        batch_count=batch_count,
+                        image_index=image_index,
+                        image_count=len(batch),
+                        images_current=prepared_before_batch + image_index,
+                        images_total=total_image_count,
+                        asset_id=draft.asset_id,
+                        action="prepared",
+                        attempt=attempt,
+                    )
+                return tuple(partial)
+            except CancelledError:
+                remove_codex_images(partial, scratch_root=image_root)
+                raise
+            except Exception:
+                remove_codex_images(partial, scratch_root=image_root)
+                if attempt == 2:
+                    raise
+                self._publish_codex_batch_progress(
+                    context,
+                    batch_index=batch_index,
+                    batch_count=batch_count,
+                    action="image_retry",
+                    attempt=attempt + 1,
+                )
+        raise RuntimeError("Image preparation attempts were exhausted")
+
+    def _refinement_payload(
+        self,
+        context: PipelineContext,
+        batch: Sequence[CaptionDraftAsset],
+        prepared: Sequence[PreparedCodexImage],
+        vocabulary: WD14TagVocabulary,
+        *,
+        batch_index: int,
+        batch_count: int,
+    ) -> dict[str, Any]:
+        if len(batch) != len(prepared) or not prepared:
+            raise ValueError("Refinement assets and prepared images must align exactly")
+        if [item.asset_id for item in batch] != [item.asset_id for item in prepared]:
+            raise ValueError("Refinement asset/image mapping is out of order")
+        return {
+            "schema_version": 1,
+            "preset": context.config.preset.value,
+            "ontology_version": 1,
+            "batch_index": batch_index,
+            "batch_count": batch_count,
+            "generate_trigger_candidates": (
+                context.config.trigger_word_mode is TriggerWordMode.CODEX_SUGGEST
+            ),
+            "vocabulary_sha256": refinement_fingerprint(sorted(vocabulary.tags)),
+            "assets": [item.model_dump(mode="json") for item in batch],
+            "images": [
+                {
+                    "asset_id": item.asset_id,
+                    "relative_name": item.relative_name,
+                    "working_sha256": item.source_sha256,
+                    "image_sha256": item.output_sha256,
+                    "width": item.width,
+                    "height": item.height,
+                    "quality": item.quality,
+                    "byte_count": item.byte_count,
+                    "profile": item.profile.model_dump(mode="json"),
+                }
+                for item in prepared
+            ],
+        }
+
+    def _load_matching_refinement_batch(
+        self,
+        record_path: Path,
+        input_hash: str,
+        prepared: Sequence[PreparedCodexImage],
+    ) -> tuple[dict[str, Any], dict[str, Any], str | None] | None:
+        if not record_path.is_file():
+            return None
+        loaded = read_json(record_path)
+        if not isinstance(loaded, dict):
+            return None
+        expected_profile = prepared[0].profile.model_dump(mode="json")
+        if (
+            loaded.get("complete") is not True
+            or loaded.get("input_hash") != input_hash
+            or not isinstance(loaded.get("payload_byte_count"), int)
+            or int(loaded["payload_byte_count"]) > _REFINEMENT_PAYLOAD_BYTES
+            or loaded.get("image_profile") != expected_profile
+            or loaded.get("image_sha256s") != [item.output_sha256 for item in prepared]
+            or loaded.get("working_sha256s") != [item.source_sha256 for item in prepared]
+            or not isinstance(loaded.get("response"), dict)
+            or not isinstance(loaded.get("audit"), dict)
+        ):
+            return None
+        warning = loaded.get("warning")
+        return (
+            dict(loaded["response"]),
+            dict(loaded["audit"]),
+            str(warning) if warning is not None else None,
+        )
+
+    def _publish_codex_image_progress(
+        self,
+        context: PipelineContext,
+        *,
+        batch_index: int,
+        batch_count: int,
+        image_index: int,
+        image_count: int,
+        images_current: int,
+        images_total: int,
+        asset_id: str,
+        action: str,
+        attempt: int,
+    ) -> None:
+        context.events.publish(
+            PipelineEvent(
+                event_type="codex_image_progress",
+                stage=PipelineStage.CODEX_REFINEMENT.value,
+                message=(
+                    f"Preparing Codex images {images_current}/{images_total}"
+                    if action == "preparing"
+                    else f"Prepared Codex images {images_current}/{images_total}"
+                ),
+                progress=image_index / max(image_count, 1),
+                details={
+                    "batch_index": batch_index,
+                    "batch_count": batch_count,
+                    "image_index": image_index,
+                    "image_count": image_count,
+                    "images_current": images_current,
+                    "images_total": images_total,
+                    "asset_id": asset_id,
+                    "action": action,
+                    "attempt": attempt,
+                },
+            )
+        )
+
+    def _publish_codex_batch_progress(
+        self,
+        context: PipelineContext,
+        *,
+        batch_index: int,
+        batch_count: int,
+        action: str,
+        attempt: int,
+    ) -> None:
+        context.events.publish(
+            PipelineEvent(
+                event_type="codex_batch_progress",
+                stage=PipelineStage.CODEX_REFINEMENT.value,
+                message=f"Codex image batch {batch_index + 1}/{batch_count}",
+                progress=(batch_index + 1) / max(batch_count, 1),
+                details={
+                    "batch_index": batch_index,
+                    "batch_count": batch_count,
+                    "action": action,
+                    "attempt": attempt,
+                },
+            )
+        )
+
+    def _prepare_refinement_review(self, context: PipelineContext) -> RefinementReviewState:
+        drafts = CaptionDraftBatch.model_validate(
+            _stage_output(context, PipelineStage.CAPTION_DRAFTING)
+        )
+        refinement = _stage_output(context, PipelineStage.CODEX_REFINEMENT)
+        candidates = tuple(
+            TriggerCandidate.model_validate(item)
+            for item in refinement.get("trigger_candidates", ())
+        )
+        vocabulary = self._refinement_vocabulary(context)
+        requires_trigger = context.config.trigger_word_mode is TriggerWordMode.CODEX_SUGGEST
+        requires_review = context.config.codex_refinement_mode is CodexRefinementMode.REVIEW
+        preview_trigger = context.config.trigger_token or (
+            candidates[0].value if candidates else "<Trigger Word required>"
+        )
+        items: list[RefinementReviewItem] = []
+        for asset_id, draft in drafts.assets.items():
+            raw_decision = refinement["decisions"][asset_id]
+            proposal = AssetRefinementProposal.model_validate(raw_decision["proposal"])
+            proposed_tags = tuple(refinement["effective_tags"][asset_id])
+            proposed_caption = ", ".join(
+                (
+                    preview_trigger,
+                    *draft.fixed_tokens,
+                    *(DEFAULT_ONTOLOGY.display(tag) for tag in proposed_tags),
+                )
+            )
+            items.append(
+                RefinementReviewItem(
+                    asset_id=asset_id,
+                    original_tags=draft.original_tags,
+                    baseline_tags=draft.effective_tags,
+                    proposed_tags=proposed_tags,
+                    effective_tags=proposed_tags,
+                    draft_caption=draft.draft_caption,
+                    proposed_caption=proposed_caption,
+                    reason=proposal.reason,
+                    confidence=proposal.confidence,
+                    factory_accepted=bool(raw_decision["accepted"]),
+                    rejection_reason=raw_decision.get("rejection_reason"),
+                )
+            )
+        fingerprint = refinement_fingerprint(
+            {
+                "run_id": context.run_id,
+                "preset": context.config.preset.value,
+                "codex_refinement_mode": context.config.codex_refinement_mode.value,
+                "trigger_word_mode": context.config.trigger_word_mode.value,
+                "trigger_token": context.config.trigger_token,
+                "drafts": drafts.model_dump(mode="json"),
+                "effective_tags": refinement["effective_tags"],
+                "decisions": refinement["decisions"],
+                "trigger_candidates": refinement["trigger_candidates"],
+            }
+        )
+        warnings = list(refinement.get("warnings", ()))
+        if requires_trigger and not candidates:
+            warnings.append("Runtime Codex did not provide valid candidates; enter a Trigger Word")
+        return RefinementReviewState(
+            run_id=context.run_id,
+            upstream_fingerprint=fingerprint,
+            requires_refinement_review=requires_review,
+            requires_trigger_selection=requires_trigger,
+            preset=context.config.preset,
+            class_token=drafts.class_token,
+            invariants=drafts.invariants,
+            pinned_tag_vocabulary=tuple(sorted(vocabulary.tags)),
+            pinned_tag_categories=dict(sorted(vocabulary.model_categories.items())),
+            trigger_word=context.config.trigger_token,
+            trigger_candidates=candidates,
+            items=tuple(items),
+            warnings=tuple(warnings),
+        )
+
+    def _apply_refinement_approval(
+        self,
+        context: PipelineContext,
+        review: RefinementReviewState,
+        approval: RefinementApproval,
+    ) -> None:
+        drafts = CaptionDraftBatch.model_validate(
+            _stage_output(context, PipelineStage.CAPTION_DRAFTING)
+        )
+        refinement = _stage_output(context, PipelineStage.CODEX_REFINEMENT)
+        effective, caption_edits = self._validate_refinement_approval_values(
+            config=context.config,
+            review=review,
+            approval=approval,
+            drafts=drafts,
+            refinement=refinement,
+            vocabulary=self._refinement_vocabulary(context),
+        )
+        context.config = context.config.model_copy(update={"trigger_token": approval.trigger_word})
+        context.artifacts["_REFINEMENT_APPROVAL"] = {
+            "approval": approval.model_dump(mode="json"),
+            "upstream_fingerprint": review.upstream_fingerprint,
+            "effective_tags": {key: list(value) for key, value in effective.items()},
+            "caption_edits": caption_edits,
+        }
+
+    @staticmethod
+    def _validate_refinement_approval_values(
+        *,
+        config: ProjectConfig,
+        review: RefinementReviewState,
+        approval: RefinementApproval,
+        drafts: CaptionDraftBatch,
+        refinement: Mapping[str, Any],
+        vocabulary: WD14TagVocabulary,
+    ) -> tuple[dict[str, tuple[str, ...]], dict[str, str]]:
+        if approval.upstream_fingerprint != review.upstream_fingerprint:
+            raise ValueError("Refinement approval fingerprint does not match the current review")
+        raw_effective = refinement.get("effective_tags")
+        if not isinstance(raw_effective, Mapping) or set(raw_effective) != set(drafts.assets):
+            raise ValueError("Refinement approval source does not cover every accepted asset")
+        effective = {asset_id: tuple(raw_effective[asset_id]) for asset_id in drafts.assets}
+        caption_edits: dict[str, str] = {}
+        if review.requires_refinement_review:
+            by_id = {item.asset_id: item for item in approval.items}
+            if len(by_id) != len(approval.items) or set(by_id) != set(drafts.assets):
+                raise ValueError("Refinement approval must decide every accepted asset")
+            proposals: list[AssetRefinementProposal] = []
+            for asset_id, draft in drafts.assets.items():
+                item = by_id[asset_id]
+                if item.decision == "accept":
+                    tags = effective[asset_id]
+                elif item.decision == "reject":
+                    tags = draft.effective_tags
+                else:
+                    if item.effective_tags is None:
+                        raise ValueError(f"{asset_id}.effective_tags: edited tags are required")
+                    tags = item.effective_tags
+                proposals.append(
+                    AssetRefinementProposal(
+                        asset_id=asset_id,
+                        decision=RefinementDecisionKind.REPLACE,
+                        effective_tags=tags,
+                        reason="User-approved refinement decision.",
+                        confidence=1.0,
+                    )
+                )
+                if item.caption is not None:
+                    caption_edits[asset_id] = item.caption
+            validated = validate_refinement_proposals(
+                drafts,
+                proposals,
+                vocabulary=vocabulary,
+            )
+            for asset_id, decision in validated.decisions.items():
+                if not decision.accepted:
+                    raise ValueError(
+                        f"{asset_id}.effective_tags: {decision.rejection_reason or 'invalid tags'}"
+                    )
+                edited = by_id[asset_id].decision == "edit"
+                if edited and decision.rejected_tags:
+                    tag, reason = next(iter(decision.rejected_tags.items()))
+                    raise ValueError(f"{asset_id}.effective_tags: {tag!r} {reason}")
+            effective = validated.effective_tags
+
+        captions = finalize_captions(drafts, effective, approval.trigger_word)
+        captions.update(caption_edits)
+        for asset_id, caption in captions.items():
+            audit = audit_captions(
+                {asset_id: caption},
+                approval.trigger_word,
+                config.preset,
+                class_token=drafts.class_token,
+                invariant_tags=drafts.invariants,
+            )
+            errors = [issue.message for issue in audit.issues if issue.severity.value == "error"]
+            if errors:
+                raise ValueError(f"{asset_id}.caption: {errors[0]}")
+            if audit.semantic_content_coverage < 1.0:
+                raise ValueError(
+                    f"{asset_id}.caption: caption must contain at least one semantic tag"
+                )
+        return effective, caption_edits
+
+    def _caption_stage(self, context: PipelineContext) -> dict[str, Any]:
+        drafts = CaptionDraftBatch.model_validate(
+            _stage_output(context, PipelineStage.CAPTION_DRAFTING)
+        )
+        approved = context.artifacts.get("_REFINEMENT_APPROVAL")
+        if not isinstance(approved, dict):
+            raise RuntimeError("Caption finalization requires a validated refinement approval")
+        effective_tags = approved["effective_tags"]
+        captions = finalize_captions(
+            drafts,
+            effective_tags,
+            context.config.trigger_token,
+        )
+        for asset_id, caption in approved.get("caption_edits", {}).items():
+            if asset_id in captions:
+                captions[asset_id] = str(caption)
         overrides = self._run_dataset_overrides(context)
         for asset_id, override in overrides.items():
             caption = override.get("final_caption")
@@ -1452,8 +2389,8 @@ class LoRAFactoryController:
             captions,
             context.config.trigger_token,
             context.config.preset,
-            class_token=class_token,
-            invariant_tags=invariants,
+            class_token=drafts.class_token,
+            invariant_tags=drafts.invariants,
         )
         if not audit.passed:
             failures = "; ".join(issue.message for issue in audit.issues[:5])
@@ -1461,10 +2398,12 @@ class LoRAFactoryController:
         CaptionWriter(context.layout.captions, raw_root=context.layout.raw).write(captions)
         return {
             "captions": captions,
-            "keep_tokens": keep_tokens,
-            "class_token": class_token,
-            "invariants": list(invariants),
-            "warnings": list(warnings),
+            "keep_tokens": drafts.keep_tokens,
+            "class_token": drafts.class_token,
+            "invariants": list(drafts.invariants),
+            "warnings": list(drafts.warnings),
+            "effective_tags": effective_tags,
+            "refinement_fingerprint": approved["upstream_fingerprint"],
             "audit": audit.model_dump(mode="json"),
         }
 
@@ -1931,18 +2870,47 @@ class LoRAFactoryController:
         context: PipelineContext,
         task: CodexTaskType,
         payload: dict[str, Any],
+        *,
+        images: Sequence[PreparedCodexImage] = (),
+        allow_fallback: bool | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], str | None]:
         if context.config.backend_mode is BackendMode.FAKE:
             response = deterministic_fallback(task, payload)
             return (
                 response.model_dump(mode="json"),
-                {"fallback_used": True, "task_type": task.value, "attempts": 0},
+                {
+                    "fallback_used": True,
+                    "task_type": task.value,
+                    "attempts": 0,
+                    "image_input_sha256s": [item.output_sha256 for item in images],
+                    "image_count": len(images),
+                },
                 "Runtime Codex intentionally replaced by deterministic Fake backend",
             )
-        result = CodexGateway(
-            self.settings.codex_runtime_root,
-            timeout_seconds=self.settings.codex_timeout_seconds,
-        ).review(task, payload, allow_fallback=context.config.allow_without_codex)
+        fallback = context.config.allow_without_codex if allow_fallback is None else allow_fallback
+        if task is CodexTaskType.DATASET_REFINEMENT:
+            fallback = False
+        try:
+            result = CodexGateway(
+                self.settings.codex_runtime_root,
+                timeout_seconds=self.settings.codex_timeout_seconds,
+            ).review(
+                task,
+                payload,
+                images=images,
+                allow_fallback=fallback,
+                cancellation=context.cancellation,
+            )
+        except (CodexCallError, CodexCallCancelled) as exc:
+            ApplicationArtifactStore(Database(context.layout.database)).persist_codex_audit(
+                context,
+                _jsonable(exc.audit),
+            )
+            raise
+        ApplicationArtifactStore(Database(context.layout.database)).persist_codex_audit(
+            context,
+            _jsonable(result.audit),
+        )
         return (
             result.response.model_dump(mode="json"),
             _jsonable(result.audit),
@@ -2840,7 +3808,6 @@ class LoRAFactoryController:
                 "asset_id": asset.asset_id,
                 "sha256": asset.sha256,
                 "size_bytes": asset.size_bytes,
-                "stored_filename": asset.stored_filename,
                 "original_filenames": [source.original_filename for source in asset.sources],
             }
             for asset in raw_manifest.raw_assets
@@ -2942,6 +3909,49 @@ class LoRAFactoryController:
                 reproducibility={
                     "schema_version": 1,
                     "run_id": context.run_id,
+                    "trigger_word": context.config.trigger_token,
+                    "codex_refinement": {
+                        "mode": context.config.codex_refinement_mode.value,
+                        "trigger_word_mode": context.config.trigger_word_mode.value,
+                        "codex_image_profile": _stage_output(
+                            context, PipelineStage.CODEX_REFINEMENT
+                        ).get("image_profile", {}),
+                        "codex_image_count": len(
+                            _stage_output(context, PipelineStage.CODEX_REFINEMENT).get(
+                                "ordered_image_hashes", ()
+                            )
+                        ),
+                        "ordered_image_hashes": _stage_output(
+                            context, PipelineStage.CODEX_REFINEMENT
+                        ).get("ordered_image_hashes", []),
+                        "batch_input_hashes": [
+                            audit["input_hash"]
+                            for audit in _stage_output(context, PipelineStage.CODEX_REFINEMENT).get(
+                                "audits", []
+                            )
+                            if isinstance(audit, Mapping)
+                            and isinstance(audit.get("input_hash"), str)
+                        ],
+                        "cleanup_status": _stage_output(
+                            context, PipelineStage.CODEX_REFINEMENT
+                        ).get("cleanup_status", "not_applicable"),
+                        "fallback_used": bool(
+                            _stage_output(context, PipelineStage.CODEX_REFINEMENT).get(
+                                "fallback_used", False
+                            )
+                        ),
+                        "chunk_count": int(
+                            _stage_output(context, PipelineStage.CODEX_REFINEMENT).get(
+                                "chunk_count", 0
+                            )
+                        ),
+                        "audits": _stage_output(context, PipelineStage.CODEX_REFINEMENT).get(
+                            "audits", []
+                        ),
+                        "approval_fingerprint": _stage_output(context, PipelineStage.CAPTIONING)[
+                            "refinement_fingerprint"
+                        ],
+                    },
                     "factory_version": __version__,
                     "factory_python": (
                         f"{sys.version_info.major}.{sys.version_info.minor}."
@@ -2996,6 +4006,12 @@ class LoRAFactoryController:
                 warnings=tuple(
                     warning
                     for warning in (
+                        *tuple(
+                            str(item)
+                            for item in _stage_output(context, PipelineStage.CODEX_REFINEMENT).get(
+                                "warnings", ()
+                            )
+                        ),
                         _stage_output(context, PipelineStage.CODEX_PRETRAIN_REVIEW)["warning"],
                         _stage_output(context, PipelineStage.CODEX_FINAL_REVIEW)["warning"],
                     )

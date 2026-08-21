@@ -8,6 +8,7 @@ from lora_factory.codex.schemas import SCHEMA_MODELS, CodexTaskType, strict_outp
 
 _ROOT = Path(__file__).resolve().parents[2]
 _SCHEMA_FILENAMES = {
+    CodexTaskType.DATASET_REFINEMENT: "codex_dataset_refinement.schema.json",
     CodexTaskType.DATASET_REVIEW: "codex_dataset_review.schema.json",
     CodexTaskType.CAPTION_REVIEW: "codex_caption_review.schema.json",
     CodexTaskType.TRAINING_PLAN: "codex_training_plan.schema.json",

@@ -9,6 +9,8 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from lora_factory.config.validation import validate_trigger_word_collision
+
 GPU_UUID_PATTERN = re.compile(r"^GPU-[0-9a-fA-F-]{8,}$")
 WINDOWS_FORBIDDEN = set('<>:"/\\|?*')
 WINDOWS_RESERVED_DEVICE_PATTERN = re.compile(
@@ -52,6 +54,34 @@ class PresetKind(StrEnum):
 class BackendMode(StrEnum):
     FAKE = "fake"
     REAL = "real"
+
+
+class CodexRefinementMode(StrEnum):
+    AUTO = "auto"
+    REVIEW = "review"
+
+
+class TriggerWordMode(StrEnum):
+    MANUAL = "manual"
+    CODEX_SUGGEST = "codex_suggest"
+
+
+def validate_trigger_word(value: str, *, allow_empty: bool = False) -> str:
+    """Normalize and validate the caption token selected by the user."""
+
+    value = value.strip()
+    if not value:
+        if allow_empty:
+            return ""
+        raise ValueError("Trigger Word is required")
+    if len(value) > 64:
+        raise ValueError("Trigger Word must not exceed 64 characters")
+    if any(char in value for char in ("\n", "\r", ",", ";", "|")):
+        raise ValueError("Trigger Word cannot contain newlines or caption separators")
+    if value != " ".join(value.split()):
+        raise ValueError("Trigger Word cannot contain repeated whitespace")
+    validate_trigger_word_collision(value)
+    return value
 
 
 class DestinationKind(StrEnum):
@@ -123,6 +153,8 @@ class ProjectConfig(FrozenModel):
     backend_mode: BackendMode = BackendMode.REAL
     quality_mode: bool = False
     allow_without_codex: bool = True
+    codex_refinement_mode: CodexRefinementMode = CodexRefinementMode.AUTO
+    trigger_word_mode: TriggerWordMode = TriggerWordMode.MANUAL
     advanced: AdvancedOverrides = Field(default_factory=AdvancedOverrides)
     locked_fields: frozenset[str] = Field(default_factory=frozenset)
 
@@ -149,16 +181,7 @@ class ProjectConfig(FrozenModel):
     @field_validator("trigger_token")
     @classmethod
     def validate_trigger_token(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("Trigger token is required")
-        if len(value) > 64:
-            raise ValueError("Trigger token must not exceed 64 characters")
-        if any(char in value for char in ("\n", "\r", ",", ";", "|")):
-            raise ValueError("Trigger token cannot contain newlines or caption separators")
-        if value != " ".join(value.split()):
-            raise ValueError("Trigger token cannot contain repeated whitespace")
-        return value
+        return validate_trigger_word(value, allow_empty=True)
 
     @field_validator("selected_gpu_uuids")
     @classmethod
@@ -181,6 +204,8 @@ class ProjectConfig(FrozenModel):
 
     @model_validator(mode="after")
     def validate_locks(self) -> ProjectConfig:
+        if self.trigger_word_mode is TriggerWordMode.MANUAL:
+            validate_trigger_word(self.trigger_token)
         valid = set(AdvancedOverrides.model_fields)
         unknown = set(self.locked_fields) - valid
         if unknown:

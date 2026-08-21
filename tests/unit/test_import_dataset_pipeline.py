@@ -169,6 +169,36 @@ def test_import_uses_verified_copies_and_monotonic_source_references(tmp_path: P
     assert sha256_file(first) != source_hash
 
 
+def test_import_manifest_size_comes_from_verified_raw_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "source.png"
+    _pattern(source)
+    layout = ProjectLayout(tmp_path / "project")
+    importer = ImmutableImportService(layout, project_id="project")
+    layout.create()
+    manifest = DatasetManifest(project_id="project")
+    actual_source_stat = source.stat()
+    original_stat = Path.stat
+
+    def forged_source_stat(path: Path, *args: object, **kwargs: object) -> os.stat_result:
+        result = original_stat(path, *args, **kwargs)
+        if path == source:
+            values = list(result)
+            values[6] += 1
+            return os.stat_result(values)
+        return result
+
+    monkeypatch.setattr(Path, "stat", forged_source_stat)
+    asset, is_new = importer._import_one(source, manifest, {})
+
+    raw_path = layout.raw / asset.stored_filename
+    assert is_new
+    assert actual_source_stat.st_size == raw_path.stat().st_size
+    assert asset.size_bytes == raw_path.stat().st_size
+
+
 def test_dataset_manifest_rejects_raw_path_traversal_at_validation_boundary() -> None:
     with pytest.raises(ValueError, match="stored_filename"):
         DatasetManifest.model_validate(_manifest_payload(stored_filename="../outside.png"))

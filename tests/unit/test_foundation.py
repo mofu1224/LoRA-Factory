@@ -6,11 +6,14 @@ import pytest
 from pydantic import ValidationError
 from sqlalchemy import inspect
 
+from lora_factory.application.artifact_store import ApplicationArtifactStore
 from lora_factory.config.models import (
     BackendMode,
+    CodexRefinementMode,
     PresetKind,
     ProjectConfig,
     ProjectDraft,
+    TriggerWordMode,
 )
 from lora_factory.config.resolver import resolve_layers
 from lora_factory.config.validation import (
@@ -25,7 +28,13 @@ from lora_factory.core.pipeline import PipelineEngine, StageDefinition
 from lora_factory.core.stage import PipelineStage, RunStatus, StageStatus
 from lora_factory.project.service import ProjectService
 from lora_factory.storage.database import Database
-from lora_factory.storage.orm import ProjectRow, RunRow, StageRow, TrainingAttemptRow
+from lora_factory.storage.orm import (
+    CodexCallRow,
+    ProjectRow,
+    RunRow,
+    StageRow,
+    TrainingAttemptRow,
+)
 from lora_factory.storage.repositories import StageRepository
 
 WINDOWS_RESERVED_DEVICE_NAMES = (
@@ -147,14 +156,45 @@ def test_trigger_token_rejects_ambiguous_caption_values(tmp_path: Path, token: s
         make_config(tmp_path, trigger_token=token)
 
 
-def test_trigger_collision_is_warning_not_validation_error(tmp_path: Path) -> None:
+def test_legacy_project_config_defaults_to_manual_trigger_and_auto_refinement(
+    tmp_path: Path,
+) -> None:
+    config = make_config(tmp_path)
+
+    assert config.trigger_word_mode is TriggerWordMode.MANUAL
+    assert config.codex_refinement_mode is CodexRefinementMode.AUTO
+
+
+def test_manual_trigger_mode_requires_trigger_word(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="Trigger Word is required"):
+        make_config(
+            tmp_path,
+            trigger_token="",
+            trigger_word_mode=TriggerWordMode.MANUAL,
+        )
+
+
+def test_codex_suggest_mode_accepts_pending_trigger_word(tmp_path: Path) -> None:
     config = make_config(
         tmp_path,
-        trigger_token="1girl",  # noqa: S106 - domain trigger, not a credential
+        trigger_token="",
+        trigger_word_mode=TriggerWordMode.CODEX_SUGGEST,
+        codex_refinement_mode=CodexRefinementMode.REVIEW,
     )
 
-    assert config.trigger_token == "1girl"  # noqa: S105 - domain trigger
-    assert "common Danbooru tag" in (trigger_token_collision_warning("1girl") or "")
+    assert config.trigger_token == ""
+    assert config.trigger_word_mode is TriggerWordMode.CODEX_SUGGEST
+    assert config.codex_refinement_mode is CodexRefinementMode.REVIEW
+
+
+def test_trigger_collision_is_a_validation_error_at_manual_project_input(tmp_path: Path) -> None:
+    with pytest.raises(ValidationError, match="collides with common Danbooru tag"):
+        make_config(
+            tmp_path,
+            trigger_token="1girl",  # noqa: S106 - domain trigger, not a credential
+        )
+
+    assert "collides with common Danbooru tag" in (trigger_token_collision_warning("1girl") or "")
     assert trigger_token_collision_warning("lfx_unique_person_7f3a") is None
 
 
@@ -170,6 +210,27 @@ def test_path_validation_rejects_traversal_and_wrong_suffix(tmp_path: Path) -> N
         ensure_descendant(tmp_path / "outside.safetensors", root)
     with pytest.raises(ValueError, match="Unsupported"):
         validate_existing_file(checkpoint, suffixes={".ckpt"})
+
+
+def test_current_public_docs_reject_stale_subset_and_candidate_failure_contracts() -> None:
+    root = Path(__file__).resolve().parents[2]
+    current_docs = {
+        path: (root / path).read_text(encoding="utf-8")
+        for path in (
+            "README.md",
+            "SECURITY.md",
+            "docs/architecture.md",
+            "docs/user-guide-ja.md",
+        )
+    }
+    current_text = "\n".join(current_docs.values())
+
+    assert "削除・canonicalization・重複除去・並べ替えだけ" not in current_text
+    assert "Codex候補を作れない: Dataset画像refinementはrecoverable failure" not in current_text
+    assert "pin済みWD14語彙から追加" in current_docs["docs/architecture.md"]
+    assert "無効な追加tagは個別に拒否" in current_docs["docs/architecture.md"]
+    assert "3件未満" in current_docs["docs/user-guide-ja.md"]
+    assert "AWAITING_REVIEW" in current_docs["docs/user-guide-ja.md"]
 
 
 def test_config_resolution_preserves_explicit_locks() -> None:
@@ -350,3 +411,49 @@ def test_pipeline_reuses_matching_successful_stage(tmp_path: Path) -> None:
     assert second.cache_hits == (PipelineStage.IMPORTING.value,)
     assert calls == ["run"]
     assert events == ["stage_started", "stage_completed", "stage_skipped"]
+
+
+def test_codex_artifact_store_redacts_absolute_paths_from_audit(tmp_path: Path) -> None:
+    database = Database(tmp_path / "state.sqlite3")
+    database.initialize()
+    config = make_config(tmp_path)
+    layout = ProjectService(tmp_path / "projects").create(config)
+    with database.session() as session:
+        session.add(
+            ProjectRow(
+                id=config.project_id,
+                name=config.lora_name,
+                root_path=str(layout.root),
+                config_json=config.model_dump(mode="json"),
+            )
+        )
+        session.add(RunRow(id="run-1", project_id=config.project_id, status=RunStatus.ACTIVE.value))
+    context = PipelineContext(
+        run_id="run-1",
+        config=config,
+        layout=layout,
+        events=EventBus(),
+        cancellation=CancellationToken(),
+    )
+    local_path = str((tmp_path / "codex" / "input" / "image.jpg").resolve())
+
+    ApplicationArtifactStore(database).persist(
+        context,
+        PipelineStage.CODEX_REFINEMENT,
+        {
+            "audits": [
+                {
+                    "call_id": "call-1",
+                    "task_type": "dataset_refinement",
+                    "local_path": local_path,
+                    "diagnostic": f"failed while reading {local_path}",
+                }
+            ]
+        },
+    )
+
+    with database.session() as session:
+        audit = session.get(CodexCallRow, "call-1").audit_json  # type: ignore[union-attr]
+    assert local_path not in str(audit)
+    assert audit["local_path"] == "image.jpg"
+    assert "<local-path>" in audit["diagnostic"]

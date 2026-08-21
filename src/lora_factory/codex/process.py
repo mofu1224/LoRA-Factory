@@ -5,11 +5,14 @@ from __future__ import annotations
 import locale
 import os
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from lora_factory.codex.environment import build_codex_environment
 from lora_factory.codex.scratch_repo import ScratchCall
+from lora_factory.core.cancellation import CancellationToken
+from lora_factory.util.process_tree import ProcessTree, process_tree_popen_kwargs
 from lora_factory.util.redaction import redact_text
 
 
@@ -20,6 +23,7 @@ class CodexProcessResult:
     timed_out: bool
     stdout: str
     stderr: str
+    cancelled: bool = False
 
 
 def _decode_process_output(raw: bytes) -> str:
@@ -43,9 +47,11 @@ def build_codex_arguments(
     call: ScratchCall,
     prompt: str,
 ) -> list[str]:
+    image_arguments = [item for path in call.image_paths for item in ("--image", str(path))]
     return [
         executable,
         "exec",
+        *image_arguments,
         "--ephemeral",
         "--sandbox",
         "read-only",
@@ -66,6 +72,7 @@ def run_codex_process(
     call: ScratchCall,
     timeout_seconds: int,
     home_for_redaction: Path | None = None,
+    cancellation: CancellationToken | None = None,
 ) -> CodexProcessResult:
     environment = build_codex_environment(os.environ)
     # The argument array is built by ``build_codex_arguments``; no shell parses it.
@@ -77,18 +84,40 @@ def run_codex_process(
         stderr=subprocess.PIPE,
         env=environment,
         creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+        **process_tree_popen_kwargs(),
     )
+    process_tree = ProcessTree(process)
     timed_out = False
-    try:
-        raw_stdout, raw_stderr = process.communicate(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        process.terminate()
+    cancelled = False
+    completed = False
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if cancellation is not None and cancellation.cancelled:
+            cancelled = True
+            break
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            timed_out = True
+            break
         try:
-            raw_stdout, raw_stderr = process.communicate(timeout=5)
+            raw_stdout, raw_stderr = process.communicate(timeout=min(0.1, remaining))
         except subprocess.TimeoutExpired:
-            process.kill()
-            raw_stdout, raw_stderr = process.communicate()
+            continue
+        if cancellation is not None and cancellation.cancelled:
+            cancelled = True
+        completed = True
+        break
+
+    try:
+        if timed_out or (cancelled and not completed):
+            process_tree.terminate()
+            try:
+                raw_stdout, raw_stderr = process.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                process_tree.kill()
+                raw_stdout, raw_stderr = process.communicate()
+    finally:
+        process_tree.close()
     stdout = _decode_process_output(raw_stdout or b"")
     stderr = _decode_process_output(raw_stderr or b"")
 
@@ -102,4 +131,5 @@ def run_codex_process(
         timed_out=timed_out,
         stdout=safe_stdout,
         stderr=safe_stderr,
+        cancelled=cancelled,
     )

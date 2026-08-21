@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,34 @@ def test_installer_rejects_runtime_lock_hash_mismatch_before_install(tmp_path: P
 
     with pytest.raises(RuntimeError, match="lock SHA-256 mismatch"):
         ManagedRuntimeInstaller(manager)._verified_runtime_lock()
+
+
+def test_installed_commit_allows_only_the_managed_runtime_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = RuntimeManager(tmp_path / "managed", _write_manifest(tmp_path, "0" * 64))
+    manager.layout.sd_scripts.joinpath(".git").mkdir(parents=True)
+    git_executable = str(tmp_path / "git.exe")
+    captured: dict[str, Any] = {}
+    monkeypatch.setattr("lora_factory.runtime.manager.shutil.which", lambda _name: git_executable)
+
+    def fake_run(arguments: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured["arguments"] = arguments
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(arguments, 0, stdout="a" * 40 + "\n", stderr="")
+
+    monkeypatch.setattr("lora_factory.runtime.manager.subprocess.run", fake_run)
+
+    assert manager.installed_commit() == "a" * 40
+    assert captured["arguments"] == [
+        git_executable,
+        "-c",
+        f"safe.directory={manager.layout.sd_scripts.resolve(strict=False)}",
+        "rev-parse",
+        "HEAD",
+    ]
+    assert captured["cwd"] == manager.layout.sd_scripts
 
 
 def test_installer_uses_lock_and_no_deps_editable_checkout(

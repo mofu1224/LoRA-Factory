@@ -55,6 +55,22 @@ class TaggerProtocol(Protocol):
 WD14TaggerProtocol = TaggerProtocol
 
 
+FAKE_WD14_VOCABULARY = (
+    "smile",
+    "looking_at_viewer",
+    "outdoors",
+    "indoors",
+    "standing",
+    "sitting",
+    "upper_body",
+    "full_body",
+    "white_dress",
+    "school_uniform",
+    "blue_hair",
+    "brown_hair",
+)
+
+
 class RawTagStore:
     """Persist raw score JSON separately from captions."""
 
@@ -79,21 +95,6 @@ class FakeTagger:
 
     model_id = "lora-factory/fake-wd14"
     revision = "1"
-
-    _vocabulary = (
-        "smile",
-        "looking_at_viewer",
-        "outdoors",
-        "indoors",
-        "standing",
-        "sitting",
-        "upper_body",
-        "full_body",
-        "white_dress",
-        "school_uniform",
-        "blue_hair",
-        "brown_hair",
-    )
 
     def __init__(
         self,
@@ -123,12 +124,12 @@ class FakeTagger:
         else:
             seed = hashlib.sha256(bytes.fromhex(digest)).digest()
             selected = [
-                self._vocabulary[index]
-                for index in range(len(self._vocabulary))
+                FAKE_WD14_VOCABULARY[index]
+                for index in range(len(FAKE_WD14_VOCABULARY))
                 if seed[index] % 5 == 0
             ][:5]
             if len(selected) < 3:
-                selected.extend(tag for tag in self._vocabulary if tag not in selected)
+                selected.extend(tag for tag in FAKE_WD14_VOCABULARY if tag not in selected)
                 selected = selected[:3]
             tags = (
                 TagScore(name=self.default_class, score=0.97, model_category="general"),

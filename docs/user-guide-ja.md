@@ -32,11 +32,12 @@ Project Editorで以下を指定します。
 
 1. LoRA Name: 最終safetensorsの名前。Windowsで使えない記号は入力できません。名前を入力して`Add Project`を押すと、`Project\<名前>\`へ`input-Image`、`output-model`、`base-model`を含む必要なdirectory、`project.yaml`、dataset manifest、SQLiteを作成します。この時点では学習は始まりません。
 2. Preset: 人物・characterの同一性を学ぶ場合はCharacter、絵柄を学ぶ場合はStyle。
-3. Trigger Token: 自分で決める呼び出し語。captionの先頭へ固定されます。
-4. Base Model: SDXL / Illustrious互換`.safetensors`。headerを安全に検査します。
-5. Images / Folders: fileを複数選択するかfolderを選択。日本語、空白、Unicodeの名前を扱えます。
-6. GPU Pool: 使用を許可するGPU UUIDだけをcheck。選択していないGPUは使いません。
-7. Output: 完成folderの親directory。
+3. Caption / Tag refinement: 安全なCodex提案を自動適用するか、学習前に全画像の差分を確認するかを選びます。Runtime Codex refinementを実行すると、採用された全画像のmetadataを除いた最大辺2048 pxの縮小コピーが、最大8枚ずつOpenAIへ送られます。Rawや元画像、元ファイル名、プロジェクトpathは送られず、一時JPEGは各呼び出し後に削除されます。画像準備またはCodex refinementの失敗時はTraining前に復旧可能な停止となるため、復旧後にResumeしてください。Dataset以外のCodex reviewは既存のフォールバック方針を維持します。画像入力の`--image`は[Codex CLI reference](https://developers.openai.com/codex/cli/reference/)を参照してください。
+4. Trigger Word: 手入力するか、Runtime Codexが作る3〜5候補から選んで編集します。`1girl`など一般的なDanbooru tagと衝突する値は使用できません。確定値は全captionの先頭、sampling、metadata、成果物へ同じ値で反映されます。
+5. Base Model: SDXL / Illustrious互換`.safetensors`。headerを安全に検査します。
+6. Images / Folders: fileを複数選択するかfolderを選択。日本語、空白、Unicodeの名前を扱えます。
+7. GPU Pool: 使用を許可するGPU UUIDだけをcheck。選択していないGPUは使いません。
+8. Output: 完成folderの親directory。
 
 開発版の`Project`はrepository直下、完成版は`LoRA Factory.exe`と同じdirectoryにあります。`Add Project`は同名projectに対して安全に再実行でき、既存fileを上書きしません。残りの項目を入力して`Create LoRA`を押すと、そのprojectへ設定を保存して学習を開始します。
 
@@ -55,6 +56,10 @@ defaultではcrop、upscale、flip、color augmentation、random cropはoffで�
 Review画面ではthumbnail、元file名、解像度、判定理由、raw tags、final caption、採用状態を確認します。低解像度、極端なaspect、blank、重複、watermark候補等には理由が表示されます。
 
 1枚に複数の意味がある場合は、`Accepted, Warning, Duplicate, Validation`のようにカテゴリを重ねて表示します。カテゴリfilterも重複して数えるため、WarningやDuplicateをValidationへ割り当てた場合でも見落としません。Validation割当はseed固定のTraining Plannerと同じsplitをDataset Review時点で計算し、後段で一致を再検証します。
+
+Codex候補の選択または差分確認が必要なrunは、Training前に正常な`AWAITING_REVIEW`となります。元tag、検証済みの追加・削除tag、提案tag、triggerなしcaption下書き、提案caption、理由、confidenceを全採用画像について確認し、画像ごとに採用・却下・編集するか、一括採用します。未知tag、禁止tag、重複、上限超過、Trigger Word・class token・semantic coverageを満たさないcaptionは保存前に行単位で表示され、修正するまでContinueできません。「Approve and continue training」は検証済みの判断だけをatomic保存し、同じrunを再開します。アプリを閉じても確認状態は失われません。上流データが変わった場合は古い承認を拒否します。
+
+手入力Trigger Wordと自動適用の組合せだけは停止せず最後まで進みます。Codex候補＋自動適用は候補選択だけ、手入力＋確認は画像差分だけ、Codex候補＋確認は両方の確定を待ちます。
 
 各行には、最終training resolutionと「upscaleしない」規則から求めた具体的なbucketも表示します。短辺が64 px未満へ丸められる極端なaspect比は`Unavailable (<64 px)`となり、例外でrun全体を止めません。
 
@@ -93,6 +98,7 @@ SettingsへA1111、Forge、ComfyUIのrootまたはLoRA folderを登録するとC
 - GPUが見つからない: NVIDIA driverと`nvidia-smi`を確認し、再起動後にSetupを再実行します。
 - runtimeがNOT READY: Setupの「Managed Training Runtime」で`Repair`を押し、PyTorch/ONNX/sd-scripts各行の具体的な結果を確認します。開発者向けの同等診断は`uv run lora-factory doctor --deep --strict`です。
 - disk不足: project outputとmanaged runtimeを合わせ、十分な空き容量があるdriveを選びます。
-- Codexが利用できない: fallback許可時はwarningとauditを残して決定論的reviewへ移ります。認証fileやAPI keyをprojectへcopyしません。
+- Codexが利用できない: Dataset画像refinementはfallbackせず、warningとauditを残してrecoverable failureとなります。Codex復旧後にResumeしてください。Dataset以外のreviewはfallback許可時に決定論的reviewへ移ります。認証fileやAPI keyをprojectへcopyしません。
+- Codex候補が3件未満: 有効なasset応答が得られていれば失敗にはせず、正常な`AWAITING_REVIEW`で停止してTrigger Wordの手入力を求めます。入力を検証・保存した後、同じrunをResumeします。
 
 障害解析用CLIの詳細は[developer guide](developer-guide.md)にあります。
