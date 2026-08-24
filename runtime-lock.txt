@@ -2,7 +2,7 @@
 # torch and torchvision are installed separately from the manifest's official cu130 index.
 # The pinned sd-scripts checkout is installed separately with --no-deps --editable.
 absl-py==2.5.0
-accelerate==1.6.0
+accelerate==1.14.0
 bitsandbytes==0.50.0
 certifi==2026.7.22
 charset-normalizer==3.4.9
