@@ -377,7 +377,7 @@ class ManagedRuntimeInstaller:
         existing = temporary.stat().st_size if temporary.exists() else 0
         request = urllib.request.Request(  # noqa: S310 - scheme and host validated above.
             url,
-            headers={"User-Agent": "LoRAFactory/v0.1"},
+            headers={"User-Agent": "LoRAFactory/v0.3"},
         )
         if existing:
             request.add_header("Range", f"bytes={existing}-")

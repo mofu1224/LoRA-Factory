@@ -1,8 +1,11 @@
 # Runtime Codexによるタグ・caption調整とTrigger Word設計
 
+> [!note] 2026-08-24 要件更新
+> Trigger Wordはユーザー入力を最優先し、空欄の場合だけCodexが補完する。以下はこの更新後の契約を正本とする。
+
 ## 目的
 
-LoRA FactoryのGUIパイプラインで、Runtime Codexが全採用画像の学習用タグとcaptionを安全に調整し、ユーザーがTrigger Wordを設定した後、学習・評価・packagingまで完結できるようにする。
+LoRA FactoryのGUIパイプラインで、Runtime Codexが全採用画像の学習用タグとcaptionを安全に調整し、ユーザー入力またはCodex補完でTrigger Wordを確定した後、学習・評価・packagingまで完結できるようにする。
 
 Runtime Codexは専用scratch Git repositoryのread-only sandboxで動作する。全採用画像について、Rawではなくmetadata除去・縮小・再encodeした一時派生画像をCodex CLIの画像入力へ添付する。Raw画像、Rawパス、project path、認証情報、GPU制御、学習実行権限は渡さない。Codexの出力はPydantic schemaとFactory側のallowlist・caption規則で再検証し、派生データにだけ適用する。
 
@@ -15,10 +18,10 @@ Runtime Codexは専用scratch Git repositoryのread-only sandboxで動作する�
 - Codex callはasset ID安定順の最大8画像単位とする。
 - Codexは画像から確認でき、pin済みWD14語彙に存在する不足タグを追加できる。
 - 適用方法はプロジェクト設定で、自動適用と確認後適用を切り替えられる。
-- Trigger WordはCodexが3〜5候補を生成し、ユーザーが選択または編集できる。
-- Trigger Wordを手入力する既存フローも維持する。
-- 手入力Trigger Wordと自動適用の組合せでは、確認停止なしに完成まで進める。
-- Codex候補の選択またはcaption差分確認が必要な場合は、学習前に安全停止し、承認後に同じrunを再開する。
+- Trigger Wordはユーザー入力を最優先し、入力済み値をCodex候補で上書きしない。
+- Trigger Wordが空欄の場合だけCodexが3〜5候補を生成し、Factoryが検証した先頭候補を自動採用する。
+- 自動適用では、入力済み値または安全なCodex候補があれば確認停止なしに完成まで進める。
+- 有効候補が3件未満、またはcaption差分確認が必要な場合は、学習前に安全停止し、承認後に同じrunを再開する。
 
 ## 採用方式
 
@@ -50,7 +53,7 @@ Codex用派生画像は、既存のorientation補正・sRGB変換・alpha合成�
 - Codex調整モード: `auto`、`review`
 - Trigger Wordモード: `manual`、`codex_suggest`
 
-`manual`では有効なTrigger Wordを開始前に要求する。`codex_suggest`では開始時のTrigger Wordを任意とし、候補確定前にはcaption確定以降へ進めない。既存schema versionのプロジェクトは`manual`として読み込み、現在のTrigger Tokenをそのまま保持する。
+`manual`では有効なTrigger Wordを開始前に要求する。既定の`codex_suggest`では入力済みTrigger Wordをユーザー指定として保持し、空欄の場合だけFactory検証済みのCodex先頭候補を自動採用する。mode未指定の既存プロジェクトも、非空のTrigger Tokenがあれば同じ値を保持するため動作互換を維持する。入力も安全な候補もない場合はcaption確定以降へ進めない。
 
 設定と確定したTrigger Wordはrun snapshotへ保存する。resumeはsnapshotを正本とし、編集中のProject Editor値を暗黙に取り込まない。
 
@@ -108,11 +111,11 @@ Codex応答はschema検証後、次の規則で再検証する。
 Project Editorへ次を追加する。
 
 - Caption / Tag調整: 自動適用、確認して適用
-- Trigger Word: 手入力、Codex候補から選択
+- Trigger Word: 入力値を使用し、空欄ならCodex候補から自動設定。確認画面では候補変更・編集可能
 
 Runtime Codex refinementは常に画像を添付し、project単位の画像送信toggleや実行ごとの確認dialogは設けない。Project Editor、実行画面、利用ガイドには、metadata除去・縮小済みの派生画像がOpenAIへ送信されることを明記する。進捗にはCodex用画像の準備数、現在batchと総batch、再試行、cache再利用、画像入力によるrecoverable停止を表示する。
 
-既存Trigger Token入力欄はTrigger Word入力欄として維持し、`manual`では必須、`codex_suggest`では候補選択後の編集欄として使う。設定はproject再読込時に復元する。
+既存Trigger Token入力欄はTrigger Word入力欄として維持する。`manual`では必須、既定の`codex_suggest`では任意とし、入力値はそのまま保持、空欄はCodexへ委任する。設定はproject再読込時に復元する。
 
 Dataset ReviewはCodex調整結果を表示できるよう拡張する。各行で元タグ、追加タグ、削除タグ、最終提案タグ、元caption下書き、提案caption、理由、confidenceを区別して表示し、個別の採用、却下、手修正と一括採用を提供する。Trigger Word候補は選択後も編集でき、同じvalidatorを通す。
 
@@ -120,10 +123,10 @@ Dataset ReviewはCodex調整結果を表示できるよう拡張する。各行�
 
 | Trigger Word | 調整モード | 動作 |
 |---|---|---|
-| 手入力 | 自動 | 停止せず完成まで実行 |
-| Codex候補 | 自動 | 候補選択だけ待ち、確定後は完成まで実行 |
-| 手入力 | 確認 | 全画像差分の承認後に実行 |
-| Codex候補 | 確認 | 候補選択と全画像差分の承認後に実行 |
+| 入力あり | 自動 | 入力値を保持し、停止せず完成まで実行 |
+| 空欄＋安全なCodex候補あり | 自動 | 先頭候補を自動採用し、停止せず完成まで実行 |
+| 入力あり／空欄＋候補あり | 確認 | 解決済みTrigger Wordを表示し、全画像差分の承認後に実行 |
+| 空欄＋候補不足 | 自動／確認 | Trigger Word手入力を待ち、Trainingは開始しない |
 
 ## 確認待ちとresume
 
@@ -159,9 +162,9 @@ Recent Projectsは確認待ちを明示し、該当projectを開くと保存済�
 
 ### Integration
 
-- 手入力＋自動適用が停止せず`READY`
-- Codex候補＋自動適用が`AWAITING_REVIEW`後に`READY`
-- review modeがTraining前に必ず停止する
+- 入力済みTrigger Word＋自動適用が値を保持して停止せず`READY`
+- 空欄＋安全なCodex候補＋自動適用が先頭候補を採用して停止せず`READY`
+- 候補不足またはreview modeがTraining前に必ず停止する
 - 承認後の同一run resume
 - 再起動後の確認待ち復元
 - stale fingerprint承認の拒否
@@ -202,8 +205,8 @@ uv run --frozen lora-factory fake-e2e --preset style --image-count 18 --json
 
 - GUIで選択したCodex調整モードとTrigger Wordモードが保存・復元される。
 - Runtime Codexが全採用画像のsanitized派生画像を直接確認し、pin済みWD14語彙の不足タグを追加でき、検証済みの有効タグとcaptionだけが学習へ渡る。
-- Trigger Word候補を選択・編集でき、確定値がcaption、sampling、metadata、成果物で一貫する。
-- 自動モードは必要なTrigger Word確定後、学習・評価・packagingまで完結する。
+- 入力済みTrigger Wordは保持され、空欄では検証済みCodex先頭候補が自動採用される。確認画面では候補を変更・編集でき、確定値がcaption、sampling、metadata、成果物で一貫する。
+- 自動モードは安全なTrigger Wordを自動解決できる場合、学習・評価・packagingまで確認停止なしで完結する。
 - 確認モードは承認前にTrainingへ進まず、再起動後も同じ確認状態を復元できる。
 - 画像準備・添付・Codex失敗時はTrainingへ進まず、cancel、crash、resume、cleanupがRaw・working画像不変性を損なわない。
 - 静的schema、ドキュメント、テスト、Fake E2Eが新しい契約と一致する。

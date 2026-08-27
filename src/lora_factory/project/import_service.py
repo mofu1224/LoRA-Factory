@@ -12,7 +12,11 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 from lora_factory.dataset.image_safety import ImageSafetyLimits, validate_image_header
-from lora_factory.dataset.scanner import ScanIssue, scan_image_inputs
+from lora_factory.dataset.scanner import (
+    ScanIssue,
+    contains_filesystem_link,
+    scan_image_inputs,
+)
 from lora_factory.project.layout import ProjectLayout
 from lora_factory.project.manifest import DatasetManifest, RawAsset, SourceReference
 from lora_factory.project.raw_store import validate_raw_object_path
@@ -136,7 +140,18 @@ class ImmutableImportService:
         manifest: DatasetManifest,
         by_sha: dict[str, RawAsset],
     ) -> tuple[RawAsset, bool]:
+        lexical_source = Path(os.path.abspath(os.fspath(source)))
+        if contains_filesystem_link(source):
+            raise ValueError(f"Filesystem links are not accepted as import sources: {source}")
         source = source.resolve(strict=True)
+        if contains_filesystem_link(source):
+            raise ValueError(f"Filesystem links are not accepted as import sources: {source}")
+        source_root = lexical_source if lexical_source.is_dir() else lexical_source.parent
+        if not source.is_relative_to(source_root):
+            raise ValueError(
+                "Import source resolved outside its selected input root; "
+                "filesystem links are not accepted"
+            )
         if source.is_relative_to(self.layout.raw.resolve(strict=False)):
             raise ValueError(f"Raw store cannot be used as an import source: {source}")
         validate_image_header(source, limits=self.safety_limits)

@@ -154,7 +154,7 @@ class ProjectConfig(FrozenModel):
     quality_mode: bool = False
     allow_without_codex: bool = True
     codex_refinement_mode: CodexRefinementMode = CodexRefinementMode.AUTO
-    trigger_word_mode: TriggerWordMode = TriggerWordMode.MANUAL
+    trigger_word_mode: TriggerWordMode = TriggerWordMode.CODEX_SUGGEST
     advanced: AdvancedOverrides = Field(default_factory=AdvancedOverrides)
     locked_fields: frozenset[str] = Field(default_factory=frozenset)
 
@@ -287,6 +287,9 @@ class AppSettings(BaseModel):
     max_sample_images_per_pass: Annotated[int, Field(ge=8, le=512)] = 96
     codex_required: bool = False
     codex_timeout_seconds: Annotated[int, Field(ge=10, le=1800)] = 180
+    codex_startup_timeout_seconds: Annotated[int, Field(ge=5, le=600)] = 45
+    codex_idle_timeout_seconds: Annotated[int, Field(ge=10, le=1200)] = 120
+    codex_retry_backoff_seconds: Annotated[float, Field(ge=0, le=30)] = 1.0
 
 
 class ResolvedConfig(FrozenModel):

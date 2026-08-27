@@ -9,6 +9,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Sequence
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,9 +23,11 @@ from lora_factory.codex.image_attachment import (
 )
 from lora_factory.codex.process import build_codex_arguments, run_codex_process
 from lora_factory.codex.prompts import prompt_for
+from lora_factory.codex.runtime import CodexRuntimeAdapter, CodexRuntimeProfile
 from lora_factory.codex.schemas import SCHEMA_MODELS, CodexTaskType, StrictModel
 from lora_factory.codex.scratch_repo import ScratchRepository
 from lora_factory.core.cancellation import CancellationToken, CancelledError
+from lora_factory.packaging.metadata import sanitize_public_metadata
 from lora_factory.util.hashing import sha256_bytes, sha256_file
 
 
@@ -46,6 +49,11 @@ class CodexAudit:
     applied_changes: dict[str, Any]
     image_input_sha256s: tuple[str, ...]
     image_count: int
+    environment: str = "unknown"
+    runtime_profile: str = "default"
+    startup_timed_out: bool = False
+    idle_timed_out: bool = False
+    completion_observed: bool = False
 
 
 class CodexCallError(RuntimeError):
@@ -79,16 +87,34 @@ class CodexGateway:
         executable: str = "codex",
         timeout_seconds: int = 180,
         max_attempts: int = 2,
+        startup_timeout_seconds: float | None = None,
+        idle_timeout_seconds: float | None = None,
+        retry_backoff_seconds: float = 0.0,
+        runtime: CodexRuntimeAdapter | None = None,
     ) -> None:
+        if timeout_seconds <= 0:
+            raise ValueError("Codex timeout must be positive")
         if not 1 <= max_attempts <= 3:
             raise ValueError("Codex attempts must be between 1 and 3")
+        if startup_timeout_seconds is not None and startup_timeout_seconds <= 0:
+            raise ValueError("Codex startup timeout must be positive")
+        if idle_timeout_seconds is not None and idle_timeout_seconds <= 0:
+            raise ValueError("Codex idle timeout must be positive")
+        if retry_backoff_seconds < 0:
+            raise ValueError("Codex retry backoff cannot be negative")
         self.scratch = ScratchRepository(scratch_root)
         self.executable = executable
         self.timeout_seconds = timeout_seconds
         self.max_attempts = max_attempts
+        self.startup_timeout_seconds = startup_timeout_seconds
+        self.idle_timeout_seconds = idle_timeout_seconds
+        self.retry_backoff_seconds = retry_backoff_seconds
+        self.runtime = runtime or CodexRuntimeAdapter(executable=executable)
 
     def version(self) -> str | None:
-        resolved = shutil.which(self.executable)
+        resolved = self.runtime.resolve_executable()
+        if resolved is None:
+            resolved = shutil.which(self.executable)
         if resolved is None:
             return None
         try:
@@ -102,7 +128,7 @@ class CodexGateway:
                 timeout=10,
                 check=False,
                 env=build_codex_environment(os.environ),
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except (OSError, subprocess.SubprocessError):
             return None
@@ -119,6 +145,10 @@ class CodexGateway:
     ) -> CodexGatewayResult:
         if cancellation is not None:
             cancellation.raise_if_cancelled()
+        sanitized_payload = sanitize_public_metadata(sanitized_input)
+        if not isinstance(sanitized_payload, dict):
+            raise ValueError("Runtime Codex input must remain a mapping after sanitization")
+        sanitized_input = sanitized_payload
         image_records = tuple(
             PreparedCodexImage.model_validate(image.model_dump(mode="python")) for image in images
         )
@@ -151,13 +181,18 @@ class CodexGateway:
             sanitized_input,
             images=image_records,
         )
-        version = self.version()
         started = time.monotonic()
+        version = self.version()
         attempts = 0
         last_exit: int | None = None
         timed_out = False
+        startup_timed_out = False
+        idle_timed_out = False
+        completion_observed = False
         warning: str | None = None
         response: StrictModel | None = None
+        selected_profile: CodexRuntimeProfile | None = None
+        operation_deadline = started + float(self.timeout_seconds)
 
         def build_audit(*, fallback_used: bool) -> CodexAudit:
             result_hash = sha256_file(call.output_path) if call.output_path.is_file() else None
@@ -178,39 +213,103 @@ class CodexGateway:
                 applied_changes={},
                 image_input_sha256s=image_input_sha256s,
                 image_count=len(image_input_sha256s),
+                environment=(
+                    selected_profile.environment.value
+                    if selected_profile is not None
+                    else "unknown"
+                ),
+                runtime_profile=(
+                    selected_profile.name if selected_profile is not None else "default"
+                ),
+                startup_timed_out=startup_timed_out,
+                idle_timed_out=idle_timed_out,
+                completion_observed=completion_observed,
             )
 
-        if version is not None:
+        def wait_for_retry() -> None:
+            if self.retry_backoff_seconds <= 0:
+                return
+            backoff_deadline = min(
+                operation_deadline,
+                time.monotonic() + self.retry_backoff_seconds,
+            )
+            while True:
+                remaining = backoff_deadline - time.monotonic()
+                if remaining <= 0:
+                    return
+                if cancellation is not None and cancellation.cancelled:
+                    raise CodexCallCancelled(audit=build_audit(fallback_used=False))
+                time.sleep(min(0.05, remaining))
+
+        if version is not None or self.runtime.probe:
+            profiles = self.runtime.profiles(version_hint=version)
             for attempt_number in range(1, self.max_attempts + 1):
                 if cancellation is not None and cancellation.cancelled:
                     if attempts:
                         raise CodexCallCancelled(audit=build_audit(fallback_used=False))
                     cancellation.raise_if_cancelled()
+                remaining = operation_deadline - time.monotonic()
+                if remaining <= 0:
+                    timed_out = True
+                    warning = warning or "Codex timed out"
+                    break
+                if not profiles:
+                    warning = warning or "Codex runtime profile is unavailable"
+                    break
                 attempts = attempt_number
+                selected_profile = profiles[(attempt_number - 1) % len(profiles)]
+                if not selected_profile.usable_for_call(has_images=bool(call.image_paths)):
+                    warning = (
+                        "Codex CLI does not expose the required safe execution options "
+                        "for this input"
+                    )
+                    continue
+                with suppress(FileNotFoundError):
+                    call.output_path.unlink()
                 arguments = build_codex_arguments(
                     executable=self.executable,
                     call=call,
                     prompt=prompt,
+                    profile=selected_profile,
                 )
                 process_kwargs: dict[str, Any] = {
                     "call": call,
-                    "timeout_seconds": self.timeout_seconds,
+                    "timeout_seconds": remaining,
                     "home_for_redaction": Path.home(),
                 }
                 if cancellation is not None:
                     process_kwargs["cancellation"] = cancellation
+                if self.startup_timeout_seconds is not None:
+                    process_kwargs["startup_timeout_seconds"] = min(
+                        self.startup_timeout_seconds,
+                        remaining,
+                    )
+                if self.idle_timeout_seconds is not None:
+                    process_kwargs["idle_timeout_seconds"] = min(
+                        self.idle_timeout_seconds,
+                        remaining,
+                    )
                 try:
                     process_result = run_codex_process(arguments, **process_kwargs)
                 except (OSError, subprocess.SubprocessError):
                     warning = "Codex process could not be started"
+                    if attempt_number < self.max_attempts:
+                        wait_for_retry()
                     continue
                 last_exit = process_result.return_code
-                timed_out = process_result.timed_out
+                timed_out = timed_out or process_result.timed_out
+                startup_timed_out = startup_timed_out or process_result.startup_timed_out
+                idle_timed_out = idle_timed_out or process_result.idle_timed_out
+                completion_observed = completion_observed or process_result.completion_observed
                 if process_result.cancelled or (
                     cancellation is not None and cancellation.cancelled
                 ):
                     raise CodexCallCancelled(audit=build_audit(fallback_used=False))
-                if not timed_out and last_exit == 0 and call.output_path.is_file():
+                output_is_available = call.output_path.is_file()
+                completed_successfully = (
+                    not process_result.timed_out and last_exit == 0 and output_is_available
+                ) or (process_result.completion_observed and output_is_available)
+                if completed_successfully:
                     try:
                         payload = json.loads(call.output_path.read_text(encoding="utf-8"))
                         response = response_model.model_validate(payload)
@@ -220,8 +319,12 @@ class CodexGateway:
                         break
                 else:
                     warning = (
-                        "Codex timed out" if timed_out else f"Codex exited with status {last_exit}"
+                        "Codex timed out"
+                        if process_result.timed_out
+                        else f"Codex exited with status {last_exit}"
                     )
+                if attempt_number < self.max_attempts:
+                    wait_for_retry()
 
         fallback_used = response is None
         if response is None:

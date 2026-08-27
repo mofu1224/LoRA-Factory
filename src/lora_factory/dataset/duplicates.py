@@ -13,7 +13,11 @@ import imagehash
 from PIL import Image, ImageOps
 from pydantic import BaseModel, ConfigDict, Field
 
-from lora_factory.dataset.clustering import UnionFind
+from lora_factory.dataset.clustering import (
+    MAX_PAIRWISE_COMPARISONS,
+    UnionFind,
+    require_pairwise_budget,
+)
 from lora_factory.dataset.quality import QualityAssessment, assess_image
 from lora_factory.util.hashing import sha256_file
 
@@ -181,10 +185,17 @@ def detect_duplicates(
     candidates: Iterable[DuplicateCandidate],
     *,
     phash_max_distance: Annotated[int, Field(ge=0, le=64)] = 4,
+    max_pairwise_comparisons: int = MAX_PAIRWISE_COMPARISONS,
 ) -> DuplicateReport:
     """Return connected pHash clusters; exact duplicates are always connected."""
 
-    hydrated = sorted((_hydrate(item) for item in candidates), key=lambda item: item.asset_id)
+    candidate_items = tuple(candidates)
+    require_pairwise_budget(
+        len(candidate_items),
+        operation="Duplicate detection",
+        max_pairwise_comparisons=max_pairwise_comparisons,
+    )
+    hydrated = sorted((_hydrate(item) for item in candidate_items), key=lambda item: item.asset_id)
     if len({item.asset_id for item in hydrated}) != len(hydrated):
         raise ValueError("Duplicate candidate asset_id values must be unique")
     hashes = {item.asset_id: str(_perceptual_hash(item.path)) for item in hydrated}

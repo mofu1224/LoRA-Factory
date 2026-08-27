@@ -228,6 +228,30 @@ def test_process_manager_captures_separate_streams_without_shell(tmp_path: Path)
     assert result.stderr_path.read_text(encoding="utf-8").strip() == "warning"
 
 
+def test_process_manager_does_not_merge_parent_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LORA_FACTORY_AUDIT_SENTINEL", "must-not-reach-managed-child")
+    result = ProcessManager().run(
+        [
+            sys.executable,
+            "-c",
+            "import os; print(os.getenv('LORA_FACTORY_AUDIT_SENTINEL', 'missing'))",
+        ],
+        cwd=tmp_path,
+        environment={},
+        stdout_path=tmp_path / "stdout.log",
+        stderr_path=tmp_path / "stderr.log",
+        cancellation=CancellationToken(),
+        timeout_seconds=10,
+        on_line=lambda _channel, _line: None,
+    )
+
+    assert result.return_code == 0
+    assert result.stdout_path.read_text(encoding="utf-8").strip() == "missing"
+
+
 def test_process_manager_streams_carriage_return_progress_lines(tmp_path: Path) -> None:
     lines: list[tuple[str, str]] = []
     result = ProcessManager().run(

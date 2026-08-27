@@ -721,10 +721,58 @@ def test_missing_trigger_candidates_waits_for_trigger_review_before_training(
     assert _training_attempt_count(controller.settings, config.project_id) == 0
 
 
+def test_blank_trigger_uses_first_codex_candidate_without_waiting(tmp_path: Path) -> None:
+    controller, config = _refinement_fixture(
+        tmp_path,
+        project_id="blank-trigger-autopilot",
+        refinement_mode=CodexRefinementMode.AUTO,
+        trigger_mode=TriggerWordMode.CODEX_SUGGEST,
+    )
+
+    result = controller.run_pipeline(config, lambda _event: None)
+
+    refinement = _stage_output(
+        controller.settings,
+        config.project_id,
+        PipelineStage.CODEX_REFINEMENT,
+    )
+    assert refinement["trigger_candidates"]
+    assert result["status"] == "READY"
+    assert result["trigger_token"] == refinement["trigger_candidates"][0]["value"]
+
+
+def test_user_trigger_takes_priority_over_codex_suggestions(tmp_path: Path) -> None:
+    controller, pending_config = _refinement_fixture(
+        tmp_path,
+        project_id="user-trigger-priority",
+        refinement_mode=CodexRefinementMode.AUTO,
+        trigger_mode=TriggerWordMode.CODEX_SUGGEST,
+    )
+    user_trigger = "user_chosen_lfx"
+    config = pending_config.model_copy(update={"trigger_token": user_trigger})
+
+    result = controller.run_pipeline(config, lambda _event: None)
+
+    refinement = _stage_output(
+        controller.settings,
+        config.project_id,
+        PipelineStage.CODEX_REFINEMENT,
+    )
+    assert result["status"] == "READY"
+    assert result["trigger_token"] == user_trigger
+    assert refinement["trigger_candidates"] == []
+    captions = tuple(
+        (controller.settings.projects_root / config.project_id / "dataset" / "captions").glob(
+            "*.txt"
+        )
+    )
+    assert captions
+    assert all(path.read_text(encoding="utf-8").startswith(f"{user_trigger},") for path in captions)
+
+
 @pytest.mark.parametrize(
     ("refinement_mode", "trigger_mode"),
     [
-        (CodexRefinementMode.AUTO, TriggerWordMode.CODEX_SUGGEST),
         (CodexRefinementMode.REVIEW, TriggerWordMode.MANUAL),
         (CodexRefinementMode.REVIEW, TriggerWordMode.CODEX_SUGGEST),
     ],
@@ -752,7 +800,7 @@ def test_refinement_waits_before_training_and_resumes_same_run(
     review = controller.refinement_review(project_id)
     assert review["run_id"] == waiting["run_id"]
     assert review["requires_refinement_review"] is (refinement_mode is CodexRefinementMode.REVIEW)
-    assert review["requires_trigger_selection"] is (trigger_mode is TriggerWordMode.CODEX_SUGGEST)
+    assert review["requires_trigger_selection"] is False
     batch_root = (
         tmp_path / "projects" / project_id / "runs" / str(waiting["run_id"]) / "codex-refinement"
     )
@@ -765,11 +813,7 @@ def test_refinement_waits_before_training_and_resumes_same_run(
     database = Database(tmp_path / "projects" / project_id / "state.sqlite3")
     with database.session() as session:
         assert session.scalar(select(func.count()).select_from(TrainingAttemptRow)) == 0
-    trigger_word = (
-        review["trigger_candidates"][0]["value"]
-        if trigger_mode is TriggerWordMode.CODEX_SUGGEST
-        else "manual_lfx"
-    )
+    trigger_word = review["trigger_word"]
     decisions = (
         [{"asset_id": item["asset_id"], "decision": "accept"} for item in review["items"]]
         if refinement_mode is CodexRefinementMode.REVIEW
@@ -1044,7 +1088,7 @@ def test_full_fake_pipeline_uses_real_formats_and_stage_graph(tmp_path: Path) ->
     assert reference_embedding["model_id"] == "lora-factory/fake-image-embedding"
     assert reference_embedding["dimension"] == 192
     assert len(reference_embedding["centroid_similarity_by_asset"]) == 8
-    assert reference_embedding["path"] == "embeddings.json"
+    assert reference_embedding["path"] == "<local-path>"
     assert set(reference_embedding["outlier_asset_ids"]) <= {
         item["asset_id"] for item in manifest["dataset_decisions"] if item["accepted"]
     }

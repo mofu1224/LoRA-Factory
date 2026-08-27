@@ -10,6 +10,8 @@ import pytest
 from PIL import Image
 
 from lora_factory.config.models import PresetKind
+from lora_factory.dataset import scanner as scanner_module
+from lora_factory.dataset.clustering import MAX_PAIRWISE_COMPARISONS, require_pairwise_budget
 from lora_factory.dataset.diversity import analyze_diversity
 from lora_factory.dataset.duplicates import DuplicateCandidate, DuplicateKind, detect_duplicates
 from lora_factory.dataset.image_normalizer import (
@@ -87,6 +89,90 @@ def test_scan_unicode_is_shallow_by_default_and_recursive_on_request(tmp_path: P
     }
 
 
+def test_scan_rejects_file_symlink_even_when_target_is_outside_selected_root(
+    tmp_path: Path,
+) -> None:
+    outside = tmp_path / "outside.png"
+    _pattern(outside)
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    link = selected / "linked.png"
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"filesystem symlinks are unavailable: {exc}")
+
+    result = scan_image_inputs((selected,))
+
+    assert result.files == ()
+    assert len(result.issues) == 1
+    assert result.issues[0].code == "filesystem_link"
+    assert result.issues[0].path == link.absolute()
+
+
+def test_scan_rejects_explicit_path_through_parent_filesystem_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    linked_directory = tmp_path / "junction"
+    linked_directory.mkdir()
+    monkeypatch.setattr(
+        scanner_module,
+        "is_filesystem_link",
+        lambda path: path == linked_directory,
+    )
+
+    result = scan_image_inputs((linked_directory / "outside.png",))
+
+    assert result.files == ()
+    assert len(result.issues) == 1
+    assert result.issues[0].code == "filesystem_link"
+
+
+def test_scan_rejects_resolution_outside_selected_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    selected = tmp_path / "selected"
+    selected.mkdir()
+    candidate = selected / "input.png"
+    _pattern(candidate)
+    outside = tmp_path / "outside.png"
+    _pattern(outside)
+    original_resolve = Path.resolve
+
+    def resolve_with_swap(self: Path, strict: bool = False) -> Path:
+        if self == candidate:
+            return outside
+        return original_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", resolve_with_swap)
+
+    result = scan_image_inputs((candidate,))
+
+    assert result.files == ()
+    assert len(result.issues) == 1
+    assert result.issues[0].code == "filesystem_link"
+
+
+def test_import_rejects_direct_file_symlink_before_copy(tmp_path: Path) -> None:
+    outside = tmp_path / "outside.png"
+    _pattern(outside)
+    link = tmp_path / "linked.png"
+    try:
+        link.symlink_to(outside)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"filesystem symlinks are unavailable: {exc}")
+
+    layout = ProjectLayout(tmp_path / "project")
+    result = ImmutableImportService(layout, project_id="project").import_paths((link,))
+
+    assert result.imported_asset_ids == ()
+    assert len(result.scan_issues) == 1
+    assert result.scan_issues[0].code == "filesystem_link"
+    assert not tuple(layout.raw.iterdir())
+
+
 def test_scan_enforces_count_file_and_total_size_limits(tmp_path: Path) -> None:
     source = tmp_path / "bounded"
     source.mkdir()
@@ -114,6 +200,36 @@ def test_scan_enforces_count_file_and_total_size_limits(tmp_path: Path) -> None:
     )
     assert len(total_limited.files) == 1
     assert total_limited.issues[-1].code == "total_size_exceeded"
+
+
+def test_duplicate_detection_rejects_unbounded_pairwise_work() -> None:
+    item_count = next(
+        count for count in range(1, 100_000) if count * (count - 1) // 2 > MAX_PAIRWISE_COMPARISONS
+    )
+    candidates = [
+        DuplicateCandidate(
+            asset_id=f"asset-{index}",
+            path=Path(f"asset-{index}.png"),
+            sha256="0" * 64,
+            area=1,
+            sharpness=1,
+            compression_blockiness=0,
+            alpha_fraction=0,
+        )
+        for index in range(item_count)
+    ]
+
+    with pytest.raises(ValueError, match="pairwise safety limit"):
+        detect_duplicates(candidates)
+
+
+def test_pairwise_override_cannot_raise_global_safety_ceiling() -> None:
+    with pytest.raises(ValueError, match="global safety limit"):
+        require_pairwise_budget(
+            1,
+            operation="test",
+            max_pairwise_comparisons=MAX_PAIRWISE_COMPARISONS + 1,
+        )
 
 
 def test_import_and_quality_reject_excessive_pixels_before_copy(tmp_path: Path) -> None:

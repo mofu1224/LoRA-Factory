@@ -64,6 +64,7 @@ from lora_factory.codex.image_attachment import (
     prepare_codex_image,
     remove_codex_images,
 )
+from lora_factory.codex.runtime import CodexRuntimeAdapter
 from lora_factory.codex.schemas import CodexTaskType, DatasetRefinementResponse
 from lora_factory.config.loader import dump_yaml_mapping, load_yaml_mapping
 from lora_factory.config.models import (
@@ -344,6 +345,7 @@ class LoRAFactoryController:
             self.settings.managed_runtime_root,
             repository_root() / "backend-manifest.json",
         )
+        self._codex_runtime = CodexRuntimeAdapter(probe=True)
         self._cancellation: CancellationToken | None = None
         self._destinations = tuple(self.settings.destinations)
 
@@ -933,7 +935,7 @@ class LoRAFactoryController:
             if approval is None:
                 approval = RefinementApproval(
                     upstream_fingerprint=review.upstream_fingerprint,
-                    trigger_word=config.trigger_token,
+                    trigger_word=review.trigger_word,
                 )
             self._apply_refinement_approval(context, review, approval)
             if run_snapshot.get("confirmed_trigger_word") != approval.trigger_word:
@@ -1883,10 +1885,11 @@ class LoRAFactoryController:
                         else "Runtime Codex returned a warning"
                     )
                     warnings.append(f"batch {batch_index}: {path_free_warning}")
-                candidate_values.extend(
-                    TriggerCandidate.model_validate(item.model_dump(mode="json"))
-                    for item in response.trigger_word_candidates
-                )
+                if not context.config.trigger_token:
+                    candidate_values.extend(
+                        TriggerCandidate.model_validate(item.model_dump(mode="json"))
+                        for item in response.trigger_word_candidates
+                    )
                 if not reused:
                     write_json_atomic(
                         record_path,
@@ -1929,6 +1932,7 @@ class LoRAFactoryController:
         if (
             context.config.backend_mode is BackendMode.FAKE
             and context.config.trigger_word_mode is TriggerWordMode.CODEX_SUGGEST
+            and not context.config.trigger_token
         ):
             seed = hashlib.sha256(context.config.project_id.encode("utf-8")).hexdigest()[:8]
             candidate_values.extend(
@@ -2074,6 +2078,7 @@ class LoRAFactoryController:
             "batch_count": batch_count,
             "generate_trigger_candidates": (
                 context.config.trigger_word_mode is TriggerWordMode.CODEX_SUGGEST
+                and not context.config.trigger_token
             ),
             "vocabulary_sha256": refinement_fingerprint(sorted(vocabulary.tags)),
             "assets": [item.model_dump(mode="json") for item in batch],
@@ -2196,11 +2201,15 @@ class LoRAFactoryController:
             for item in refinement.get("trigger_candidates", ())
         )
         vocabulary = self._refinement_vocabulary(context)
-        requires_trigger = context.config.trigger_word_mode is TriggerWordMode.CODEX_SUGGEST
-        requires_review = context.config.codex_refinement_mode is CodexRefinementMode.REVIEW
-        preview_trigger = context.config.trigger_token or (
-            candidates[0].value if candidates else "<Trigger Word required>"
+        resolved_trigger = context.config.trigger_token or (
+            candidates[0].value if candidates else ""
         )
+        requires_trigger = (
+            context.config.trigger_word_mode is TriggerWordMode.CODEX_SUGGEST
+            and not resolved_trigger
+        )
+        requires_review = context.config.codex_refinement_mode is CodexRefinementMode.REVIEW
+        preview_trigger = resolved_trigger or "<Trigger Word required>"
         items: list[RefinementReviewItem] = []
         for asset_id, draft in drafts.assets.items():
             raw_decision = refinement["decisions"][asset_id]
@@ -2254,7 +2263,7 @@ class LoRAFactoryController:
             invariants=drafts.invariants,
             pinned_tag_vocabulary=tuple(sorted(vocabulary.tags)),
             pinned_tag_categories=dict(sorted(vocabulary.model_categories.items())),
-            trigger_word=context.config.trigger_token,
+            trigger_word=resolved_trigger,
             trigger_candidates=candidates,
             items=tuple(items),
             warnings=tuple(warnings),
@@ -2874,6 +2883,10 @@ class LoRAFactoryController:
         images: Sequence[PreparedCodexImage] = (),
         allow_fallback: bool | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], str | None]:
+        sanitized_payload = sanitize_public_metadata(payload)
+        if not isinstance(sanitized_payload, dict):
+            raise ValueError("Runtime Codex payload must remain a mapping after sanitization")
+        payload = sanitized_payload
         if context.config.backend_mode is BackendMode.FAKE:
             response = deterministic_fallback(task, payload)
             return (
@@ -2894,6 +2907,10 @@ class LoRAFactoryController:
             result = CodexGateway(
                 self.settings.codex_runtime_root,
                 timeout_seconds=self.settings.codex_timeout_seconds,
+                startup_timeout_seconds=self.settings.codex_startup_timeout_seconds,
+                idle_timeout_seconds=self.settings.codex_idle_timeout_seconds,
+                retry_backoff_seconds=self.settings.codex_retry_backoff_seconds,
+                runtime=self._codex_runtime,
             ).review(
                 task,
                 payload,
@@ -3161,19 +3178,42 @@ class LoRAFactoryController:
         retry_allowed: bool,
     ) -> dict[str, Any]:
         command_argv = [
-            redact_text(str(item), home=Path.home())
-            .replace(str(context.layout.root), "%PROJECT_ROOT%")
-            .replace(str(context.config.base_model), "%BASE_MODEL%")
-            .replace(str(context.config.output_root), "%OUTPUT_ROOT%")
+            str(
+                sanitize_public_metadata(
+                    redact_text(str(item), home=Path.home())
+                    .replace(str(context.layout.root), "%PROJECT_ROOT%")
+                    .replace(str(context.config.base_model), "%BASE_MODEL%")
+                    .replace(str(context.config.output_root), "%OUTPUT_ROOT%")
+                )
+            )
             for item in getattr(error, "command_argv", ())
         ]
+        current_plan_payload = current_plan.model_dump(mode="json")
+        current_plan_payload.pop("training_gpu_uuid", None)
+        selected_gpu_summary = {
+            "count": len(selected_gpus),
+            "compatible_count": sum(1 for item in selected_gpus if item.compatible),
+            "total_vram_mb": sum(item.total_vram_mb for item in selected_gpus),
+            "free_vram_mb": sum(item.free_vram_mb for item in selected_gpus),
+        }
+        deterministic_decision = sanitize_public_metadata(decision.model_dump(mode="json"))
+        if not isinstance(deterministic_decision, dict):
+            raise TypeError("Runtime Codex recovery decision must remain a mapping")
+        decision_plan = deterministic_decision.get("plan")
+        if isinstance(decision_plan, dict):
+            decision_plan.pop("training_gpu_uuid", None)
+            provenance = decision_plan.get("provenance")
+            if isinstance(provenance, dict):
+                provenance.pop("training_gpu_uuid", None)
         payload = {
             "classification": error.classification.value,
-            "diagnostics": redact_text(str(error), home=Path.home())[-2000:],
+            "diagnostics": str(
+                sanitize_public_metadata(redact_text(str(error), home=Path.home())[-2000:])
+            ),
             "command_argv": command_argv,
             "deterministically_recoverable": retry_allowed,
-            "deterministic_decision": decision.model_dump(mode="json"),
-            "current_plan": current_plan.model_dump(mode="json"),
+            "deterministic_decision": deterministic_decision,
+            "current_plan": current_plan_payload,
             "resolved_config": {
                 "preset": context.config.preset.value,
                 "advanced": context.config.advanced.model_dump(mode="json"),
@@ -3184,7 +3224,7 @@ class LoRAFactoryController:
                 "runtime_profile": str(self.runtime.manifest["profile_id"]),
                 "sd_scripts_commit": str(self.runtime.manifest["sd_scripts"]["commit"]),
             },
-            "selected_gpus": [item.model_dump(mode="json") for item in selected_gpus],
+            "selected_gpu_summary": selected_gpu_summary,
             "locked_fields": sorted(context.config.locked_fields),
             "previous_attempts": [
                 {

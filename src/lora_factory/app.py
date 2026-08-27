@@ -5,12 +5,15 @@ from __future__ import annotations
 import sys
 from collections.abc import Sequence
 from importlib import import_module
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
-from PySide6.QtWidgets import QApplication
+from lora_factory.qt_runtime import prepare_qt_runtime
 
-from lora_factory.gui.contracts import ApplicationController, UnavailableController
-from lora_factory.gui.main_window import MainWindow
+prepare_qt_runtime()
+
+if TYPE_CHECKING:
+    from lora_factory.gui.contracts import ApplicationController
+    from lora_factory.gui.main_window import MainWindow
 
 
 def create_default_controller() -> ApplicationController:
@@ -19,8 +22,10 @@ def create_default_controller() -> ApplicationController:
     try:
         services = import_module("lora_factory.application.service")
         controller_type = services.LoRAFactoryController
-        return cast(ApplicationController, controller_type())
+        return cast("ApplicationController", controller_type())
     except Exception as error:
+        from lora_factory.gui.contracts import UnavailableController
+
         return UnavailableController(
             f"Application Services could not be initialized. {type(error).__name__}: {error}"
         )
@@ -29,11 +34,15 @@ def create_default_controller() -> ApplicationController:
 def create_window(controller: ApplicationController | None = None) -> MainWindow:
     """Construct a window with an injectable controller for tests and packaging."""
 
+    from lora_factory.gui.main_window import MainWindow
+
     return MainWindow(controller or create_default_controller())
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the native desktop application."""
+
+    from PySide6.QtWidgets import QApplication
 
     arguments = list(argv) if argv is not None else sys.argv
     application = QApplication.instance() or QApplication(arguments)

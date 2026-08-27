@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +16,7 @@ from lora_factory.packaging.metadata import (
     PublicMetadataSanitizer,
     artifact_record,
     inspect_safetensors,
+    public_base_model_id,
 )
 from lora_factory.packaging.readme import build_output_readme
 from lora_factory.util.hashing import sha256_file
@@ -64,6 +66,7 @@ class FinalizationResult(BaseModel):
 class Finalizer:
     def finalize(self, request: FinalizationRequest) -> FinalizationResult:
         sanitizer = PublicMetadataSanitizer()
+        base_model_sha256 = self._validate_base_model(request)
         selected_info = inspect_safetensors(request.selected.path)
         for candidate in request.alternatives[:3]:
             inspect_safetensors(candidate.path)
@@ -94,13 +97,15 @@ class Finalizer:
                 "lora_name": request.lora_name,
                 "trigger_token": request.trigger_token,
                 "preset": request.preset.value,
-                "base_model": request.base_model.name,
-                "base_model_sha256": request.base_model_sha256,
+                "base_model_sha256": base_model_sha256,
                 "best_checkpoint": request.selected.checkpoint_id,
                 "recommended_weight": request.selected.recommended_weight,
                 "final_model": artifact_record(final_model),
             }
         )
+        if not isinstance(training_info, dict):
+            raise TypeError("Sanitized training metadata must be a mapping")
+        training_info["base_model"] = public_base_model_id(base_model_sha256)
         write_json_atomic(root / "training_info.json", training_info)
         write_json_atomic(root / "evaluation.json", sanitizer.sanitize(request.evaluation))
         (root / "resolved_config.yaml").write_text(
@@ -115,7 +120,7 @@ class Finalizer:
             {
                 **request.reproducibility,
                 "generated_at": datetime.now(UTC).isoformat(),
-                "base_model_sha256": request.base_model_sha256,
+                "base_model_sha256": base_model_sha256,
                 "final_lora": artifact_record(final_model),
                 "selected_checkpoint": selected_info,
                 "alternatives": [artifact_record(path) for path in alternative_paths],
@@ -143,6 +148,21 @@ class Finalizer:
             comparison=comparison_path,
             sha256=sha256_file(final_model),
         )
+
+    @staticmethod
+    def _validate_base_model(request: FinalizationRequest) -> str:
+        digest = request.base_model_sha256.strip().casefold()
+        if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            raise ValueError("base_model_sha256 must contain exactly 64 hexadecimal characters")
+        if not request.base_model.is_file():
+            raise FileNotFoundError(f"Base model does not exist: {request.base_model}")
+        actual = sha256_file(request.base_model)
+        if actual != digest:
+            raise ValueError(
+                "base_model_sha256 does not match the selected base-model file: "
+                f"expected {digest}, actual {actual}"
+            )
+        return digest
 
     def promote_alternative(
         self,

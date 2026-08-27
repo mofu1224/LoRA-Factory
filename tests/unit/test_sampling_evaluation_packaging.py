@@ -289,14 +289,17 @@ def test_finalizer_creates_complete_hash_verified_output_and_safe_destination(
     comparison = tmp_path / "comparison-source.png"
     Image.new("RGB", (64, 64), "navy").save(preview)
     render_grid([(preview, "epoch 1")], comparison, columns=1, cell_size=(64, 64))
+    base_model = tmp_path / "private-personal-model.safetensors"
+    base_model.write_bytes(b"private base model")
+    base_model_sha256 = sha256_file(base_model)
     output = tmp_path / "output" / "Snow"
     request = FinalizationRequest(
         output_directory=output,
         lora_name="Snow",
         trigger_token="snow_person",  # noqa: S106 - domain trigger token, not a password.
         preset=PresetKind.CHARACTER,
-        base_model=tmp_path / "base.safetensors",
-        base_model_sha256="f" * 64,
+        base_model=base_model,
+        base_model_sha256=base_model_sha256,
         selected=CheckpointCandidate(
             checkpoint_id="epoch1",
             path=selected_path,
@@ -379,8 +382,10 @@ def test_finalizer_creates_complete_hash_verified_output_and_safe_destination(
     assert "C:\\Users\\Alice" not in public_metadata
     assert "E:\\Private Models" not in public_metadata
     assert "private-name.png" not in public_metadata
+    assert "private-personal-model.safetensors" not in public_metadata
     assert "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee" not in public_metadata
     assert "gpu-1" in public_metadata
+    assert "Base model: sha256:" + base_model_sha256 in public_metadata
     assert "Backend warning at <local-path>" in public_metadata
 
     a1111_root = tmp_path / "a1111"
@@ -406,3 +411,19 @@ def test_finalizer_refuses_to_overwrite_different_existing_artifact(tmp_path: Pa
 
     with pytest.raises(FileExistsError):
         Finalizer._atomic_verified_copy(source, destination)
+
+
+def test_finalizer_rejects_invalid_or_mismatched_base_model_digest(tmp_path: Path) -> None:
+    base_model = tmp_path / "base.safetensors"
+    base_model.write_bytes(b"base model")
+    request = FinalizationRequest.model_construct(
+        base_model=base_model,
+        base_model_sha256="0" * 64,
+    )
+
+    with pytest.raises(ValueError, match="does not match"):
+        Finalizer._validate_base_model(request)
+
+    malformed = request.model_copy(update={"base_model_sha256": "C:\\private\\model"})
+    with pytest.raises(ValueError, match="exactly 64 hexadecimal"):
+        Finalizer._validate_base_model(malformed)

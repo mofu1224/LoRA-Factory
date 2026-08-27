@@ -635,7 +635,7 @@ Expected results: deterministic metadata-free JPEGs; maximum 8 images per call; 
 - `.venv\Scripts\python.exe -m lora_factory.cli fake-e2e`: exit 0, Character reached `READY`. `.venv\Scripts\python.exe -m lora_factory.cli fake-e2e --preset style --image-count 18 --json`: exit 0, Style reached `READY`. For each run, 18 accepted images were covered exactly once by three image-backed audits (`8,8,2`), audit image-hash counts were `8,8,2`, 18/18 working hashes matched the generated working PNGs, source hashes were unchanged, manifest image/hash counts were 18, cleanup status was `removed_after_each_call`, and scratch JPEG count was 0. The two Task 6 Fake E2E run roots were resolved below `.artifacts/fake-e2e` and removed after inspection.
 - `codex login status`: exit 1 with `Not logged in`. `LORA_FACTORY_LIVE_CODEX` was not set, no live Codex call was made, and the live image boundary remains unverified. The opt-in test uses a locally generated solid-color non-person fixture, limits the accepted response vocabulary to the three tags represented in its sanitized input, and cleans the prepared JPEG in `finally`.
 - `git diff --check`: exit 0. Secret-like search over `src tests docs README.md SECURITY.md`: exit 1 with zero matches. The original stale-contract search returned four self/history matches below `docs/superpowers/plans/**`; the binding adjusted search excluding that directory exited 1 with zero current public docs/source matches.
-- `default_app_settings().codex_runtime_root` resolved to `C:\Users\mofu\AppData\Local\LoRAFactory\codex-scratch`; the required recursive JPEG scan returned zero files. No credentials were inspected or modified.
+- `default_app_settings().codex_runtime_root` resolved to the configured local Codex scratch root; the required recursive JPEG scan returned zero files. No credentials were inspected or modified.
 
 ### 2026-08-20 Task 6 fix/verification round 1
 
@@ -644,7 +644,7 @@ Expected results: deterministic metadata-free JPEGs; maximum 8 images per call; 
 - `.venv\Scripts\ruff.exe format --check .`: exit 0, 205 files already formatted. `.venv\Scripts\ruff.exe check .`: exit 0, all checks passed. `.venv\Scripts\python.exe -m mypy src`: exit 0, no issues in 145 source files. Ruffの`.ruff_cache` access-denied warningは非致命で、終了コードは0だった。
 - `.venv\Scripts\python.exe -m pytest -p no:cacheprovider`: exit 0, 675 passed, 6 skipped in 111.55s. Skipはlive Codex 2件と未導入managed runtime 4件だけだった。
 - `.venv\Scripts\python.exe -m pytest -p no:cacheprovider --cov=lora_factory --cov-branch --cov-report=term --cov-fail-under=80`: exit 0, 675 passed, 6 skipped in 120.61s; branch coverage 83.24%で80% gateを通過した。
-- Fix round 1後の`git diff --check`はexit 0。secret-like privacy searchと`docs/superpowers/plans/**`を除くadjusted stale-contract searchは各exit 1、0 match。configured scratch rootは`C:\Users\mofu\AppData\Local\LoRAFactory\codex-scratch`で、recursive JPEG scanはexit 0、0件だった。
+- Fix round 1後の`git diff --check`はexit 0。secret-like privacy searchと`docs/superpowers/plans/**`を除くadjusted stale-contract searchは各exit 1、0 match。configured scratch rootはローカル設定値で、recursive JPEG scanはexit 0、0件だった。
 - Character/Style Fake E2Eはsignature test fixの影響範囲外なので再実行せず、直前roundのfresh evidence（両方`READY`、各18/18、audit `8,8,2`、Raw/working hash不変、JPEG 0件）を保持した。`codex login status`も再実行せず、直前roundの`Not logged in`に基づきauthenticated liveは引き続きskipであり、live passは主張しない。
 
 ## Outcomes
@@ -667,7 +667,7 @@ Fresh verification:
 - touched 16 Python filesのRuff format check: exit 0, 16 files already formatted。Ruff lint: exit 0, all checks passed。既知の`.ruff_cache` ACL warningのみ。
 - touched 11 source filesのmypy: exit 0, no issues found。
 - `git diff --check`: exit 0。secret-like searchとhistorical plan除外stale-contract search: 各exit 1、0 match。
-- configured scratch root `C:\Users\mofu\AppData\Local\LoRAFactory\codex-scratch`: JPEG 0件。task-created Codex PID 3件は全て不存在。
+- configured scratch root（ローカル設定値）: JPEG 0件。task-created Codex PID 3件は全て不存在。
 - immutable pre-fix snapshotとの差分は意図した20 fileだけで、snapshotと`final-review.diff`は変更していない。Git mutationは行っていない。
 
 Authenticated live CodexはTask 6時点の`Not logged in`により未検証のままであり、このfix waveのbriefに従ってfull suite/Fake E2Eは再実行していない。fresh focused/static/final gatesは全て成功した。

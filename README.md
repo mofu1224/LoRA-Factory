@@ -29,7 +29,7 @@ Python、CUDA、PyTorch、sd-scripts、WD14、CLIPはアプリ本体に同梱せ
 
 ### 2) ZIPをダウンロードする
 
-GitHub Releasesからv0.1のWindows版ZIPをダウンロードします。ZIPはGitHub Releasesの公式ページから取得し、ダウンロード完了後に展開してください。
+GitHub Releasesから対象リリースのWindows版ZIPをダウンロードします。ZIPはGitHub Releasesの公式ページから取得し、ダウンロード完了後に展開してください。
 
 ### 3) 展開してWindowsの前提ランタイムを導入する
 
@@ -63,7 +63,9 @@ codex login status
 
 Codex CLIは任意のフォールバックを許可できますが、Codexによるレビューや自動化を使う場合はChatGPTアカウントでログインしてください。認証情報やAPIキーをプロジェクトへコピーする必要はありません。
 
-Runtime CodexによるDatasetのCaption / Tag refinementでは、採用された全画像について、metadataを除いた最大辺2048 pxの縮小コピーを最大8枚ずつOpenAIへ送ります。Rawや元画像、元ファイル名、プロジェクトpathは送信しません。各呼び出し後に一時JPEGを削除します。Codexは画像から確認できる不足tagをpin済みWD14語彙から追加でき、無効な追加tagは個別に拒否されます。画像準備またはCodex refinementが失敗した場合は、学習開始前に復旧可能な失敗として停止します。有効な応答でTrigger Word候補だけが3件未満の場合は`AWAITING_REVIEW`で手入力を待ちます。Dataset以外のCodex reviewは既存のフォールバック方針を維持します。画像入力のCLI引数は[Codex CLI reference](https://developers.openai.com/codex/cli/reference/)の`--image`を参照してください。
+Runtime Codexは初期状態のCodex CLIとCodexRouter設定を自動判定します。stdout/stderrのpipe詰まりを避け、起動・無通信・総時間を個別に監視し、再試行を1つの総時間予算へ制限します。Routerまたは未知設定で起動に失敗した場合だけ、ユーザー設定を読み込まないisolated profileへ切り替えます。詳しい契約は[Codex CLI実行環境非依存タイムアウト設計](docs/codex-runtime-design.md)を参照してください。
+
+Runtime CodexによるDatasetのCaption / Tag refinementでは、採用された全画像について、metadataを除いた最大辺2048 pxの縮小コピーを最大8枚ずつOpenAIへ送ります。Rawや元画像、元ファイル名、プロジェクトpathは送信しません。各呼び出し後に一時JPEGを削除します。Codexは画像から確認できる不足tagをpin済みWD14語彙から追加でき、無効な追加tagは個別に拒否されます。Trigger Wordは入力値があればその値を保持し、空欄なら検証済みCodex候補の先頭を自動採用します。画像準備またはCodex refinementが失敗した場合は、学習開始前に復旧可能な失敗として停止します。有効な応答でTrigger Word候補だけが3件未満の場合は`AWAITING_REVIEW`で手入力を待ちます。Dataset以外のCodex reviewは既存のフォールバック方針を維持します。画像入力のCLI引数は[Codex CLI reference](https://developers.openai.com/codex/cli/reference/)の`--image`を参照してください。
 
 ### 5) 初回起動とSetup
 
@@ -81,7 +83,7 @@ Setupでは、アプリ内Python 3.12、uv、Git、Codex CLIと認証、NVIDIA�
 
 1. `LoRA Name`: 完成する`.safetensors`の名前を入力して`Add Project`を押します。
 2. `Preset`: 人物の同一性は`Character`、絵柄は`Style`を選びます。
-3. `Trigger Word`: LoRAを呼び出す、一般的なDanbooru tagと衝突しない固有のトークンを決めます。
+3. `Trigger Word`: 任意です。入力した固有トークンはそのまま使用し、空欄ならRuntime Codexが検証済み候補から自動設定します。
 4. `Base Model`: SDXL / Illustrious互換の`.safetensors`を指定します。
 5. `Images / Folders`: 学習画像を複数選択するか、画像フォルダーを指定します。
 6. `GPU Pool`: 使用を許可するGPU UUIDだけを選択します。選択していないGPUは使用されません。
@@ -117,6 +119,8 @@ reproducibility_manifest.json
 SettingsでAUTOMATIC1111、Forge、ComfyUIのrootまたはLoRAフォルダーを登録すると、完成したLoRAをコピーできます。同名ファイルは上書きせず、コピー後にハッシュを確認します。
 
 ### 9) よくある問題
+
+- QtWidgetsの「指定されたプロシージャが見つかりません」エラーは、別アプリのQt DLLが先に解決される環境にも対応しています。解消しない場合は展開先のinstall_vcredist.cmdを再実行し、完了後にWindowsを再起動してください。
 
 - Setupの`uv`または`Git`が赤い: PowerShellを開き直し、`git --version`と`uv --version`を確認してからアプリを再起動します。
 - Codexが赤い: `codex login status`を実行し、未ログインなら`codex`から`Sign in with ChatGPT`を実行します。Datasetの画像refinementは復旧後にResumeします。Dataset以外のCodex reviewは、フォールバック許可時に決定論的reviewへ移行できます。

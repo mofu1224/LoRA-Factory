@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from lora_factory.codex.environment import build_codex_environment
+from lora_factory.codex.runtime import CodexRuntimeAdapter
 from lora_factory.config.models import AppSettings, DestinationConfig, DestinationKind
 from lora_factory.gpu.discovery import discover_nvidia_gpus
 from lora_factory.gpu.models import GpuDevice
@@ -156,6 +157,10 @@ def build_setup_checks(
         )
 
     codex = which("codex")
+    if codex is None and which is shutil.which:
+        # The packaged CLI may be installed outside PATH (for example under
+        # LocalAppData on Windows); use the same bounded resolver as Gateway.
+        codex = CodexRuntimeAdapter().resolve_executable()
     codex_required = settings.codex_required
     checks.append(
         _check(

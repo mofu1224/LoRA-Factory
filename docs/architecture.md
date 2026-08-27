@@ -78,9 +78,13 @@ Training Plannerはdataset/GPUから暫定planを作った後、学習開始前�
 
 ## Runtime Codex boundary
 
+実行環境の判定、Routerからisolated profileへの切替、stdout pipe詰まり対策、起動/無通信/総時間timeoutの状態機械は[Codex CLI実行環境非依存タイムアウト設計](codex-runtime-design.md)で定義します。全試行の時間予算を共有し、設定されたMCPとoptional toolを呼び出し単位で無効化します。
+
 Runtime CodexのDataset refinementは、dedicated scratch Git repositoryへsanitized JSON、schema、promptを配置し、採用asset全件のmetadata-freeな縮小JPEGを安定順で最大8枚ずつ`codex exec --ephemeral --sandbox read-only --json --output-schema ... --image ...`へ渡します。Raw/original画像、元ファイル名、raw/project path、GPU UUID、認証情報、学習権限は渡しません。JPEGは各呼び出し後に削除し、packageへ含めません。進捗eventはpath-freeな`codex_image_progress`と`codex_batch_progress`としてApplication ServiceからGUI workerへ渡します。画像準備、Codex実行、schema、mappingの失敗は復旧可能な失敗としてTraining前に停止し、Dataset refinementではfallbackしません。Dataset以外のCodex reviewは既存のpolicyに従い、許可時はdeterministic fallbackを維持します。全採用assetの構造化payloadは128 KiB未満にchunk化し、元WD14 tag/confidence、triggerなしdraft、既知warningだけを渡します。outputをPydantic schemaで再検証し、Codexは入力tagの削除・canonicalization・重複除去・並べ替えに加え、画像から直接確認できる不足tagをpin済みWD14語彙から追加できます。未知語彙、禁止category、区切り文字、重複、上限超過などの無効な追加tagは個別に拒否し、同じassetの検証済み変更は保持します。WD14元結果は上書きせず、Factory検証済み`effective_tags`だけを派生captionへ使います。画像入力は[Codex CLI reference](https://developers.openai.com/codex/cli/reference/)の`--image`に従います。
 
 静的schemaはRuntimeのPydantic response modelから生成したものと完全一致させます。Codex Structured Outputsのsubsetに合わせ、rootをobject、全fieldをrequired、全objectを`additionalProperties: false`とし、`default`と表示用`title`は除去します。Dataset Refinement、Dataset、Caption、Training、Recovery、Finalの6 schemaをparity testで監視します。要件は[OpenAI Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs)を参照してください。
+
+Trigger Wordはユーザー入力を最優先し、入力済みならCodex候補で上書きしません。空欄の場合だけ、Factoryが3〜5件へ検証・正規化したCodex候補の先頭を自動採用します。有効候補が3件未満なら未確定のまま`AWAITING_REVIEW`へ移り、Trainingは開始しません。
 
 確認待ちは例外ではなくdurableな`RunStatus.AWAITING_REVIEW`です。Codex process、worker、GPU lease、trainer、optimizer state、checkpointを残さずにreturnし、run directoryのPydantic review/approval JSONと上流fingerprintを使って同じrunを再開します。Trigger Wordだけを変えた場合、taggingとCodex refinementは元snapshot設定でcache hitし、caption確定以降だけが新しいTrigger Wordを含むfingerprintになります。
 

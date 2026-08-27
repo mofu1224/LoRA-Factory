@@ -9,6 +9,7 @@ from collections.abc import Callable, Mapping, Sequence
 from io import StringIO
 
 from lora_factory.gpu.models import GpuBinding, GpuDevice
+from lora_factory.util.environment import build_managed_child_environment
 
 type DiscoveryRunner = Callable[[tuple[str, ...], float], subprocess.CompletedProcess[str]]
 
@@ -132,7 +133,9 @@ def bind_gpu_for_child(
     if gpu_uuid not in selected_uuids:
         raise ValueError(f"GPU {gpu_uuid} is outside the selected pool")
     physical_index = resolve_gpu_indices(selected_uuids, devices)[gpu_uuid]
-    environment = dict(os.environ if base_environment is None else base_environment)
+    environment = build_managed_child_environment(
+        os.environ if base_environment is None else base_environment
+    )
     environment.update(
         {
             "CUDA_DEVICE_ORDER": "PCI_BUS_ID",

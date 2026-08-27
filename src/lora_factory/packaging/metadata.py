@@ -16,6 +16,7 @@ _WINDOWS_PATH_IN_TEXT = re.compile(r"(?i)(?<![A-Za-z0-9])(?:[A-Z]:[\\/]|\\\\)[^\
 _POSIX_PATH_IN_TEXT = re.compile(r"(?<![A-Za-z0-9:])/(?:home|Users|tmp|var/tmp|mnt)/[^\r\n\t\"']+")
 _OMITTED_PUBLIC_KEYS = frozenset(
     {
+        "base_model",
         "codex_runtime_root",
         "command_argv",
         "configured_root",
@@ -31,6 +32,15 @@ _OMITTED_PUBLIC_KEYS = frozenset(
         "training_dataset_config",
     }
 )
+_OMITTED_PUBLIC_KEYS_CASEFOLD = frozenset(key.casefold() for key in _OMITTED_PUBLIC_KEYS)
+
+
+def public_base_model_id(sha256: str) -> str:
+    """Return a portable base-model label without exposing its local filename."""
+
+    if re.fullmatch(r"[0-9a-fA-F]{64}", sha256):
+        return f"sha256:{sha256.casefold()}"
+    return "sha256:<unverified>"
 
 
 class PublicMetadataSanitizer:
@@ -44,17 +54,16 @@ class PublicMetadataSanitizer:
             return {
                 str(key): self.sanitize(item)
                 for key, item in value.items()
-                if str(key) not in _OMITTED_PUBLIC_KEYS
+                if str(key).casefold() not in _OMITTED_PUBLIC_KEYS_CASEFOLD
             }
         if isinstance(value, list | tuple):
             return [self.sanitize(item) for item in value]
         if isinstance(value, Path):
-            return value.name
+            return "<local-path>"
         if isinstance(value, str):
             sanitized = _GPU_UUID.sub(self._gpu_alias, value)
             if self._is_absolute_path(sanitized):
-                normalized = sanitized.replace("\\", "/").rstrip("/")
-                return normalized.rsplit("/", 1)[-1] or "<local-path>"
+                return "<local-path>"
             sanitized = _WINDOWS_PATH_IN_TEXT.sub("<local-path>", sanitized)
             return _POSIX_PATH_IN_TEXT.sub("<local-path>", sanitized)
         return value

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lora-factory"
-version = "v0.1"
+version = "0.3"
 description = "Native Windows application for safe, reproducible SDXL LoRA creation"
 readme = "README.md"
 license = { file = "LICENSE" }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Literal
@@ -28,6 +29,7 @@ class ScanIssue(BaseModel):
         "too_many_entries",
         "too_many_images",
         "file_too_large",
+        "filesystem_link",
         "total_size_exceeded",
     ]
     message: str
@@ -47,9 +49,39 @@ def _path_sort_key(path: Path) -> tuple[str, str]:
     return (text.casefold(), text)
 
 
+def is_filesystem_link(path: Path) -> bool:
+    """Return whether ``path`` is a symlink, junction, or other reparse point."""
+
+    try:
+        if path.is_symlink():
+            return True
+        is_junction = getattr(path, "is_junction", None)
+        if callable(is_junction) and is_junction():
+            return True
+        attributes = getattr(os.lstat(path), "st_file_attributes", 0)
+    except OSError:
+        return False
+    return bool(attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400))
+
+
+def contains_filesystem_link(path: Path) -> bool:
+    """Return whether ``path`` or any of its parents is a filesystem link."""
+
+    current = Path(os.path.abspath(os.fspath(path)))
+    while True:
+        if is_filesystem_link(current):
+            return True
+        parent = current.parent
+        if parent == current:
+            return False
+        current = parent
+
+
 def _directory_files(directory: Path, *, recursive: bool) -> Iterable[Path]:
     if not recursive:
-        yield from (entry for entry in directory.iterdir() if entry.is_file())
+        yield from (
+            entry for entry in directory.iterdir() if entry.is_file() or is_filesystem_link(entry)
+        )
         return
 
     def raise_walk_error(error: OSError) -> None:
@@ -61,7 +93,7 @@ def _directory_files(directory: Path, *, recursive: bool) -> Iterable[Path]:
         directories.sort(key=str.casefold)
         for filename in sorted(filenames, key=str.casefold):
             candidate = Path(current) / filename
-            if candidate.is_file():
+            if candidate.is_file() or is_filesystem_link(candidate):
                 yield candidate
 
 
@@ -85,7 +117,16 @@ def scan_image_inputs(
     stop_scanning = False
 
     for raw_input in inputs:
-        source = Path(raw_input).expanduser().resolve(strict=False)
+        source = Path(os.path.abspath(os.fspath(Path(raw_input).expanduser())))
+        if contains_filesystem_link(source):
+            issues.append(
+                ScanIssue(
+                    path=source,
+                    code="filesystem_link",
+                    message=f"Filesystem links are not accepted as image inputs: {source}",
+                )
+            )
+            continue
         if not source.exists():
             issues.append(
                 ScanIssue(path=source, code="missing", message=f"Input does not exist: {source}")
@@ -94,8 +135,10 @@ def scan_image_inputs(
         if stop_scanning:
             break
         if source.is_dir():
+            source_root = source
             candidates = _directory_files(source, recursive=recursive)
         elif source.is_file():
+            source_root = source.parent
             candidates = (source,)
         else:
             issues.append(
@@ -136,8 +179,43 @@ def scan_image_inputs(
                 )
                 stop_scanning = True
                 break
+            if contains_filesystem_link(candidate):
+                issues.append(
+                    ScanIssue(
+                        path=candidate.absolute(),
+                        code="filesystem_link",
+                        message=(
+                            "Filesystem links are not accepted as image inputs: "
+                            f"{candidate.absolute()}"
+                        ),
+                    )
+                )
+                continue
             suffix = candidate.suffix.lower()
-            resolved = candidate.resolve(strict=False)
+            try:
+                resolved = candidate.resolve(strict=True)
+            except OSError as exc:
+                issues.append(
+                    ScanIssue(
+                        path=candidate.absolute(),
+                        code="unreadable",
+                        message=f"Cannot resolve image file {candidate}: {exc}",
+                    )
+                )
+                continue
+            if contains_filesystem_link(candidate) or not resolved.is_relative_to(source_root):
+                issues.append(
+                    ScanIssue(
+                        path=candidate.absolute(),
+                        code="filesystem_link",
+                        message=(
+                            "Image path resolved outside the selected input root; "
+                            "filesystem links are not accepted: "
+                            f"{candidate.absolute()}"
+                        ),
+                    )
+                )
+                continue
             if suffix not in SUPPORTED_IMAGE_EXTENSIONS:
                 if candidate == source and source.is_file():
                     issues.append(

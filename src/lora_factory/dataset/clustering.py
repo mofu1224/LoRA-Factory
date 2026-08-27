@@ -6,6 +6,33 @@ from collections.abc import Callable, Sequence
 
 import numpy as np
 
+MAX_PAIRWISE_COMPARISONS = 2_000_000
+
+
+def require_pairwise_budget(
+    item_count: int,
+    *,
+    operation: str,
+    max_pairwise_comparisons: int = MAX_PAIRWISE_COMPARISONS,
+) -> None:
+    """Reject inputs whose all-pairs work would exceed the local safety budget."""
+
+    if item_count < 0:
+        raise ValueError("item_count must be non-negative")
+    if max_pairwise_comparisons < 1:
+        raise ValueError("max_pairwise_comparisons must be positive")
+    if max_pairwise_comparisons > MAX_PAIRWISE_COMPARISONS:
+        raise ValueError(
+            "max_pairwise_comparisons cannot exceed the global safety limit of "
+            f"{MAX_PAIRWISE_COMPARISONS} comparisons"
+        )
+    comparisons = item_count * max(0, item_count - 1) // 2
+    if comparisons > max_pairwise_comparisons:
+        raise ValueError(
+            f"{operation} exceeds the pairwise safety limit of "
+            f"{max_pairwise_comparisons} comparisons"
+        )
+
 
 class UnionFind:
     def __init__(self, size: int) -> None:
@@ -37,10 +64,18 @@ class UnionFind:
 
 
 def cluster_by_pairwise[T](
-    items: Sequence[T], related: Callable[[T, T], bool]
+    items: Sequence[T],
+    related: Callable[[T, T], bool],
+    *,
+    max_pairwise_comparisons: int = MAX_PAIRWISE_COMPARISONS,
 ) -> tuple[tuple[T, ...], ...]:
     """Connected components under a symmetric pairwise relation."""
 
+    require_pairwise_budget(
+        len(items),
+        operation="Pairwise clustering",
+        max_pairwise_comparisons=max_pairwise_comparisons,
+    )
     union = UnionFind(len(items))
     for left in range(len(items)):
         for right in range(left + 1, len(items)):
@@ -57,6 +92,7 @@ def cosine_similarity_clusters(
 ) -> tuple[tuple[str, ...], ...]:
     """Cluster normalized embedding neighbors without requiring scikit-learn."""
 
+    require_pairwise_budget(len(asset_ids), operation="Embedding clustering")
     matrix = np.asarray(embeddings, dtype=np.float32)
     if matrix.ndim != 2 or matrix.shape[0] != len(asset_ids):
         raise ValueError("embeddings must be a 2D matrix aligned with asset_ids")
@@ -64,12 +100,15 @@ def cosine_similarity_clusters(
     if np.any(norms == 0):
         raise ValueError("embedding vectors must be non-zero")
     normalized = matrix / norms
-    similarities = normalized @ normalized.T
     union = UnionFind(len(asset_ids))
-    for left in range(len(asset_ids)):
-        for right in range(left + 1, len(asset_ids)):
-            if float(similarities[left, right]) >= minimum_similarity:
-                union.union(left, right)
+    block_size = 512
+    for block_start in range(0, len(asset_ids), block_size):
+        block_end = min(len(asset_ids), block_start + block_size)
+        similarities = normalized[block_start:block_end] @ normalized.T
+        for offset, left in enumerate(range(block_start, block_end)):
+            for right in range(left + 1, len(asset_ids)):
+                if float(similarities[offset, right]) >= minimum_similarity:
+                    union.union(left, right)
     return tuple(
         tuple(asset_ids[index] for index in group) for group in union.components() if len(group) > 1
     )

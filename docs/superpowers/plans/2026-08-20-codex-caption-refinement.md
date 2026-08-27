@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** GUIパイプライン内でRuntime Codexが全採用画像のtag/captionを安全に調整し、Trigger Wordの手入力または候補選択後に学習・評価・packagingまで完結できるようにする。
+**Goal:** GUIパイプライン内でRuntime Codexが全採用画像のtag/captionを安全に調整し、Trigger Wordはユーザー入力を優先、空欄だけCodexで補完して学習・評価・packagingまで完結できるようにする。
 
 **Architecture:** WD14結果を不変の証拠として残し、triggerなしcaption下書き、Codex提案、Factory検証済みeffective tags、確定captionを別々のstage artifactとして扱う。確認が必要なrunは`AWAITING_REVIEW`で正常終了し、fingerprint付き承認を保存した同じrunだけを下流へresumeする。
 
@@ -23,7 +23,7 @@
 
 ## Purpose and acceptance
 
-Project Editorで`auto/review`と`manual/codex_suggest`を保存・復元できる。全採用assetに対するCodex提案は入力tagの部分集合だけを許し、Factory検証済み結果からTrigger Word先頭のcaptionを確定する。必要なユーザー入力があるrunはTraining前に`AWAITING_REVIEW`となり、再起動後にも復元・編集・承認でき、stale承認を拒否して同一runを再開する。手入力＋自動は停止せず、学習・評価・packagingを完走する。
+Project Editorで`auto/review`と`manual/codex_suggest`を保存・復元できる。全採用assetに対するCodex提案はFactory側で再検証し、Trigger Wordは入力済み値を保持、空欄では検証済みCodex先頭候補を自動採用する。安全な候補不足またはreview指定のrunはTraining前に`AWAITING_REVIEW`となり、再起動後にも復元・編集・承認でき、stale承認を拒否して同一runを再開する。自動モードでTrigger Wordを解決できる場合は、学習・評価・packagingを確認停止なしで完走する。
 
 ## Progress
 
@@ -34,11 +34,13 @@ Project Editorで`auto/review`と`manual/codex_suggest`を保存・復元でき�
 - [x] 2026-08-20: stage、確認待ち、承認fingerprint、resumeを追加した。
 - [x] 2026-08-20: GUI設定・差分確認・承認再開を追加した。
 - [x] 2026-08-20: metadata、docs、全品質gateを完了した。
+- [x] 2026-08-24: ユーザー入力優先・空欄Codex補完へ更新し、TDD、GUI、文書、全品質gate、Character/Style Fake E2Eを完了した。
 
 ## Surprises & Discoveries
 
 - 2026-08-20: 現行`_execute()`は全stageを一括実行し、正常な途中停止を表現しない。`AWAITING_REVIEW`は例外ではなく、前半stage実行後の明示的returnとして組み込む必要がある。
 - 2026-08-20: `ProjectConfig.schema_version`は1のままでextra forbidだが、default付きfield追加なら旧projectを互換読込できる。
+- 2026-08-24: `trigger_word_mode`の既定を`codex_suggest`へ変えても、既存の非空Trigger Tokenは解決時に最優先されるため値と実行結果を維持できる。空欄だけが新たにCodex委任となる。
 - 2026-08-20: `CaptionRow`は最終caption向けであり、draft/proposal/approvalはstage artifactとrun directory JSONを正本にするとmigrationなしで既存DBを維持できる。
 
 ## Decision Log
@@ -47,6 +49,7 @@ Project Editorで`auto/review`と`manual/codex_suggest`を保存・復元でき�
 - 2026-08-20: 元WD14 tagを上書きせず、Codex結果は`effective_tags`として保持する。
 - 2026-08-20: 確認情報はrun directoryのatomic JSONとstage artifactへ保存し、承認fingerprint一致時だけresumeする。
 - 2026-08-20: Git操作禁止のため、writing-plans標準のcommit stepはすべて省略する。
+- 2026-08-24: Trigger Word解決順序を「ユーザー入力 → Factory検証済みCodex先頭候補 → `AWAITING_REVIEW`」に固定する。review modeでも解決済み値を初期表示し、ユーザーは変更できる。
 
 ## Architecture and milestones
 
@@ -233,6 +236,13 @@ Expected observations are: focused tests pass after each milestone; review-requi
 - 2026-08-20: Character and Style Fake E2E both reached `READY`; source hashes remained unchanged. Character observed 21 stages including `CAPTION_DRAFTING` and `CODEX_REFINEMENT`; Style reported the same stage graph.
 - 2026-08-20: Codex CLI 0.147.0 was installed but `login status` returned `Not logged in`; the opt-in `live_codex` test was not run. Four other live tests were skipped because the pinned managed runtime is not installed.
 
+- 2026-08-24: TDD REDは、入力済み`codex_suggest`が`AWAITING_REVIEW`になること、空欄＋安全な候補が同じく待機すること、ProjectConfig/GUIがmanual既定であることを各公開境界で再現した。
+- 2026-08-24: focused unit/integration/GUIは440 passed。Ruff formatは189 files、Ruff lintは指摘0、mypyは146 source filesで成功した。
+- 2026-08-24: 全pytestは700 passed、4 skipped、branch coverage 83.29%で80% gateを通過した。skipは明示opt-in実Codex 2件とlive base model未設定2件。
+- 2026-08-24: Character/Style Fake E2Eは各18画像、21 stages、165 eventsで`READY`。両方でsource hash不変を確認した。
 ## Outcomes & Retrospective
 
 Runtime Codex refinement, Trigger Word modes, durable review/resume, GUI approval, audit metadata, static schema, documentation, and regression coverage are implemented. All non-live quality gates pass. The design spec, ExecPlan, implementation, and tests remain unstaged and uncommitted on branch `v0.3` per user instruction.
+### 2026-08-24 User-or-Codex Trigger policy extension
+
+ユーザーが入力したTrigger WordはCodex候補より優先して保持し、空欄の場合だけ検証済み候補の先頭を自動採用する。候補不足では従来どおりTraining前にdurable waitし、review modeでは解決済み値を編集可能な初期値として表示する。既存のmanual mode、Factory validation、same-run resume、Raw不変性を維持した。

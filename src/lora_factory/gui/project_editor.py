@@ -266,14 +266,18 @@ class ProjectEditor(QWidget):
         self.trigger_word_mode.setObjectName("triggerWordMode")
         self.trigger_word_mode.addItem("Enter manually", TriggerWordMode.MANUAL)
         self.trigger_word_mode.addItem(
-            "Choose from Codex suggestions", TriggerWordMode.CODEX_SUGGEST
+            "Use entered value; otherwise let Codex choose",
+            TriggerWordMode.CODEX_SUGGEST,
+        )
+        self.trigger_word_mode.setCurrentIndex(
+            self.trigger_word_mode.findData(TriggerWordMode.CODEX_SUGGEST)
         )
         form.addRow("Trigger Word", self.trigger_word_mode)
 
         self.trigger_token = QLineEdit()
         self.trigger_token.setObjectName("triggerToken")
         self.trigger_token.setPlaceholderText("A unique token, without commas")
-        form.addRow("LoRA tag (trigger) *", self.trigger_token)
+        form.addRow("LoRA tag (trigger)", self.trigger_token)
         self.trigger_warning = QLabel()
         self.trigger_warning.setObjectName("triggerWarning")
         self.trigger_warning.setWordWrap(True)
@@ -388,7 +392,7 @@ class ProjectEditor(QWidget):
     def _update_trigger_mode(self) -> None:
         suggested = self.trigger_word_mode.currentData() == TriggerWordMode.CODEX_SUGGEST
         self.trigger_token.setPlaceholderText(
-            "Optional initial value; choose or edit a Codex suggestion"
+            "Optional: your value is kept; blank lets Codex choose"
             if suggested
             else "A unique token, without commas"
         )
@@ -547,7 +551,7 @@ class ProjectEditor(QWidget):
         refinement_mode = str(read("codex_refinement_mode", CodexRefinementMode.AUTO.value))
         refinement_index = self.codex_refinement_mode.findData(CodexRefinementMode(refinement_mode))
         self.codex_refinement_mode.setCurrentIndex(max(refinement_index, 0))
-        trigger_mode = str(read("trigger_word_mode", TriggerWordMode.MANUAL.value))
+        trigger_mode = str(read("trigger_word_mode", TriggerWordMode.CODEX_SUGGEST.value))
         trigger_mode_index = self.trigger_word_mode.findData(TriggerWordMode(trigger_mode))
         self.trigger_word_mode.setCurrentIndex(max(trigger_mode_index, 0))
         self.trigger_token.setText(str(read("trigger_token", "")))
@@ -579,7 +583,9 @@ class ProjectEditor(QWidget):
         self.lora_name.clear()
         self.preset.setCurrentIndex(0)
         self.codex_refinement_mode.setCurrentIndex(0)
-        self.trigger_word_mode.setCurrentIndex(0)
+        self.trigger_word_mode.setCurrentIndex(
+            self.trigger_word_mode.findData(TriggerWordMode.CODEX_SUGGEST)
+        )
         self.trigger_token.clear()
         self.base_model.clear()
         self.training_paths.clear()
