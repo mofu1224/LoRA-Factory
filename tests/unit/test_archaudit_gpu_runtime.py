@@ -71,12 +71,34 @@ def test_archaudit_discovers_csv_and_re_resolves_uuid_after_index_reorder() -> N
         GPU_B,
         selected_uuids=(GPU_B,),
         devices=reordered,
-        base_environment={"CUDA_VISIBLE_DEVICES": "99", "SAFE": "yes"},
+        base_environment={
+            "CUDA_VISIBLE_DEVICES": "99",
+            "SAFE": "yes",
+            "CODEX_API_KEY": "must-not-reach-managed-child",
+            "CUDA_PATH_V12_4": "C:\\CUDA\\v12.4",
+            "CUDA_PATH_SECRET": "must-not-reach-managed-child",
+        },
     )
     assert binding.physical_index == 0
     assert binding.logical_index == 0
     assert binding.environment["CUDA_VISIBLE_DEVICES"] == "0"
-    assert binding.environment["SAFE"] == "yes"
+    assert "SAFE" not in binding.environment
+    assert "CODEX_API_KEY" not in binding.environment
+    assert binding.environment["CUDA_PATH_V12_4"] == "C:\\CUDA\\v12.4"
+    assert "CUDA_PATH_SECRET" not in binding.environment
+
+
+def test_archaudit_gpu_binding_does_not_inherit_parent_secret_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LORA_FACTORY_AUDIT_SENTINEL", "must-not-reach-managed-child")
+    binding = bind_gpu_for_child(
+        GPU_A,
+        selected_uuids=(GPU_A,),
+        devices=(_device(GPU_A, 0),),
+    )
+
+    assert "LORA_FACTORY_AUDIT_SENTINEL" not in binding.environment
 
 
 def test_archaudit_discovery_uses_argument_array() -> None:

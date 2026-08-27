@@ -89,9 +89,13 @@ def test_license_export_fails_when_required_distribution_missing(tmp_path, monke
 def test_windows_build_carries_external_runtime_inputs_and_license_export() -> None:
     root = repository_root()
     spec = (root / "packaging" / "lora_factory.spec").read_text(encoding="utf-8")
+    qt_hook = root / "packaging" / "qt_runtime_hook.py"
     build_script = (root / "scripts" / "build_windows.ps1").read_text(encoding="utf-8")
     vcredist_script = (root / "scripts" / "install_vcredist.ps1").read_text(encoding="utf-8")
 
+    assert qt_hook.is_file()
+    assert 'runtime_hooks=[str(ROOT / "packaging" / "qt_runtime_hook.py")]' in spec
+    assert "prepare_qt_runtime()" in qt_hook.read_text(encoding="utf-8")
     assert 'ROOT / "runtime-lock.txt"' in spec
     assert '"src" / "lora_factory" / "runtime_scripts" / "wd14_infer.py"' in spec
     assert '"src" / "lora_factory" / "runtime_scripts" / "clip_embed.py"' in spec
@@ -116,3 +120,4 @@ def test_windows_build_carries_external_runtime_inputs_and_license_export() -> N
     assert '"PySide6.QtPdf"' in spec
     assert 'filename.startswith("qt6virtualkeyboard")' in spec
     assert 'filename.startswith("qt6pdf")' in spec
+    assert 'filename.startswith("icu")' in spec

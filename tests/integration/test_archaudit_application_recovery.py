@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -199,6 +200,10 @@ def test_archaudit_application_oom_recovery_uses_fresh_attempt_and_advisory_code
     assert recovery_payloads[0]["command_argv"] == []
     assert recovery_payloads[0]["dependency_versions"]["training_backend"] == backend.version
     assert recovery_payloads[0]["resolved_config"]["preset"] == PresetKind.CHARACTER.value
+    assert "training_gpu_uuid" not in recovery_payloads[0]["current_plan"]
+    assert "selected_gpus" not in recovery_payloads[0]
+    assert recovery_payloads[0]["selected_gpu_summary"]["count"] == 1
+    assert GPU_UUID not in json.dumps(recovery_payloads[0], ensure_ascii=False)
     assert [(item.attempt, item.status) for item in attempts] == [
         (1, "failed_recoverable"),
         (2, "completed"),

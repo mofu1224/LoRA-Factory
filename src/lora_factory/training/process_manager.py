@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from lora_factory.core.cancellation import CancellationToken
+from lora_factory.util.environment import build_managed_child_environment
 from lora_factory.util.process_tree import ProcessTree, process_tree_popen_kwargs
 from lora_factory.util.redaction import redact_text
 
@@ -88,7 +89,7 @@ class ProcessManager:
         process = subprocess.Popen(  # noqa: S603 - validated executable and argument array, no shell.
             arguments,
             cwd=cwd,
-            env={**os.environ, **dict(environment)},
+            env=build_managed_child_environment(environment),
             shell=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

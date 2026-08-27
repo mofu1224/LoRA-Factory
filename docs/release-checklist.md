@@ -15,7 +15,7 @@
 1. Confirm CI passes on `main`.
 2. Run the Windows release workflow manually once and test the downloaded artifact on a clean Windows account.
 3. Verify the ZIP SHA-256, launch `LoRA Factory.exe`, run Setup, and complete a Fake Backend project.
-4. Create an annotated semantic-version tag such as `v0.1` and push that tag.
+4. Create an annotated semantic-version tag such as `v0.3-bata` and push that tag; mark beta tags as pre-releases.
 5. The release workflow builds and attaches the Windows ZIP and SHA-256 file.
 6. Confirm the public build was created with `-SystemVcRuntime` and contains no standard system VC++ runtime DLLs.
 7. Confirm the exact Qt/PySide source archive and LGPL source-offer procedure recorded in `licenses/Qt/README.md` remain available.

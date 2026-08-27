@@ -24,6 +24,8 @@ Setup画面でPython 3.12、uv、Git、Codex CLIの認証、NVIDIA driver/NVML/G
 
 Runtime Codexは、認証済みCodex CLIの既定モデルを使用します。特定モデルを固定しないため、アカウントで利用可能なCodex CLI設定に追従します。
 
+初期CLIとCodexRouterは自動判定されます。呼び出しごとに起動・無通信・総時間を制限し、Routerの起動失敗時だけisolated profileへ切り替えます。設定済みMCPとoptional toolは無効化され、画像付き呼び出しでも同じ安全境界を維持します。設計の詳細は[Codex CLI実行環境非依存タイムアウト設計](codex-runtime-design.md)を参照してください。
+
 Setupが未完了でもFake Backendによる動作確認はできます。Fakeは学習用途の代替modelではなく、workflowの再現試験用です。managed runtimeにはCLIP画像embedding modelも含まれ、WD14と合わせて大きなbatchでGPUメモリが足りない場合は自動的にbatchを半減して再試行します。
 
 ## 3. New Project
@@ -33,7 +35,7 @@ Project Editorで以下を指定します。
 1. LoRA Name: 最終safetensorsの名前。Windowsで使えない記号は入力できません。名前を入力して`Add Project`を押すと、`Project\<名前>\`へ`input-Image`、`output-model`、`base-model`を含む必要なdirectory、`project.yaml`、dataset manifest、SQLiteを作成します。この時点では学習は始まりません。
 2. Preset: 人物・characterの同一性を学ぶ場合はCharacter、絵柄を学ぶ場合はStyle。
 3. Caption / Tag refinement: 安全なCodex提案を自動適用するか、学習前に全画像の差分を確認するかを選びます。Runtime Codex refinementを実行すると、採用された全画像のmetadataを除いた最大辺2048 pxの縮小コピーが、最大8枚ずつOpenAIへ送られます。Rawや元画像、元ファイル名、プロジェクトpathは送られず、一時JPEGは各呼び出し後に削除されます。画像準備またはCodex refinementの失敗時はTraining前に復旧可能な停止となるため、復旧後にResumeしてください。Dataset以外のCodex reviewは既存のフォールバック方針を維持します。画像入力の`--image`は[Codex CLI reference](https://developers.openai.com/codex/cli/reference/)を参照してください。
-4. Trigger Word: 手入力するか、Runtime Codexが作る3〜5候補から選んで編集します。`1girl`など一般的なDanbooru tagと衝突する値は使用できません。確定値は全captionの先頭、sampling、metadata、成果物へ同じ値で反映されます。
+4. Trigger Word: 任意です。入力した値はユーザー指定として保持し、空欄ならRuntime Codexが作る3〜5件の検証済み候補から先頭を自動採用します。確認画面が開く場合は候補変更や編集もできます。`1girl`など一般的なDanbooru tagと衝突する値は使用できません。確定値は全captionの先頭、sampling、metadata、成果物へ同じ値で反映されます。
 5. Base Model: SDXL / Illustrious互換`.safetensors`。headerを安全に検査します。
 6. Images / Folders: fileを複数選択するかfolderを選択。日本語、空白、Unicodeの名前を扱えます。
 7. GPU Pool: 使用を許可するGPU UUIDだけをcheck。選択していないGPUは使いません。
@@ -57,9 +59,9 @@ Review画面ではthumbnail、元file名、解像度、判定理由、raw tags�
 
 1枚に複数の意味がある場合は、`Accepted, Warning, Duplicate, Validation`のようにカテゴリを重ねて表示します。カテゴリfilterも重複して数えるため、WarningやDuplicateをValidationへ割り当てた場合でも見落としません。Validation割当はseed固定のTraining Plannerと同じsplitをDataset Review時点で計算し、後段で一致を再検証します。
 
-Codex候補の選択または差分確認が必要なrunは、Training前に正常な`AWAITING_REVIEW`となります。元tag、検証済みの追加・削除tag、提案tag、triggerなしcaption下書き、提案caption、理由、confidenceを全採用画像について確認し、画像ごとに採用・却下・編集するか、一括採用します。未知tag、禁止tag、重複、上限超過、Trigger Word・class token・semantic coverageを満たさないcaptionは保存前に行単位で表示され、修正するまでContinueできません。「Approve and continue training」は検証済みの判断だけをatomic保存し、同じrunを再開します。アプリを閉じても確認状態は失われません。上流データが変わった場合は古い承認を拒否します。
+Codex候補不足または差分確認が必要なrunは、Training前に正常な`AWAITING_REVIEW`となります。元tag、検証済みの追加・削除tag、提案tag、triggerなしcaption下書き、提案caption、理由、confidenceを全採用画像について確認し、画像ごとに採用・却下・編集するか、一括採用します。未知tag、禁止tag、重複、上限超過、Trigger Word・class token・semantic coverageを満たさないcaptionは保存前に行単位で表示され、修正するまでContinueできません。「Approve and continue training」は検証済みの判断だけをatomic保存し、同じrunを再開します。アプリを閉じても確認状態は失われません。上流データが変わった場合は古い承認を拒否します。
 
-手入力Trigger Wordと自動適用の組合せだけは停止せず最後まで進みます。Codex候補＋自動適用は候補選択だけ、手入力＋確認は画像差分だけ、Codex候補＋確認は両方の確定を待ちます。
+Trigger Wordを入力した場合は常にその値を使います。空欄＋自動適用では検証済みCodex候補の先頭を自動採用して停止せず進みます。確認モードでは全画像差分の承認を待ち、Codexが選んだTrigger Wordも編集できます。安全な候補が3件未満の場合だけ、モードに関係なく手入力を待ちます。
 
 各行には、最終training resolutionと「upscaleしない」規則から求めた具体的なbucketも表示します。短辺が64 px未満へ丸められる極端なaspect比は`Unavailable (<64 px)`となり、例外でrun全体を止めません。
 

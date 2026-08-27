@@ -314,7 +314,7 @@ wheels = [
 
 [[package]]
 name = "lora-factory"
-version = "0.1"
+version = "0.3"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },

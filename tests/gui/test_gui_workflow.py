@@ -674,6 +674,22 @@ def test_dataset_review_override_and_advanced_settings(qtbot: Any) -> None:
     assert values.resolution == 896
 
 
+def test_new_project_defaults_to_user_value_or_codex_trigger_policy(qtbot: Any) -> None:
+    editor = ProjectEditor()
+    qtbot.addWidget(editor)
+
+    assert editor.trigger_word_mode.currentData() == TriggerWordMode.CODEX_SUGGEST
+    assert "otherwise let Codex choose" in editor.trigger_word_mode.currentText()
+    assert "Optional" in editor.trigger_token.placeholderText()
+
+    editor.trigger_word_mode.setCurrentIndex(
+        editor.trigger_word_mode.findData(TriggerWordMode.MANUAL)
+    )
+    editor.clear_form()
+
+    assert editor.trigger_word_mode.currentData() == TriggerWordMode.CODEX_SUGGEST
+
+
 def test_editor_persists_refinement_and_trigger_word_modes(qtbot: Any, tmp_path: Path) -> None:
     window = MainWindow(FakeController())
     qtbot.addWidget(window)

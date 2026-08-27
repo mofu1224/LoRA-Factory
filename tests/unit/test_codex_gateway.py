@@ -152,6 +152,38 @@ def test_scratch_repo_is_dedicated_git_repo_with_strict_schema(tmp_path: Path) -
     assert set(schema["required"]) == set(schema["properties"])
 
 
+def test_gateway_sanitizes_payload_before_scratch_write(tmp_path: Path) -> None:
+    gateway = CodexGateway(tmp_path / "codex-runtime")
+    gateway.version = lambda: None  # type: ignore[method-assign]
+    physical_gpu_uuid = "GPU-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    gateway.review(
+        CodexTaskType.RECOVERY,
+        {
+            "base_model": r"C:\\Users\\Alice\\private-model.safetensors",
+            "BASE_MODEL": r"C:\\Users\\Alice\\uppercase-private-model.safetensors",
+            "Original_Path": r"C:\\Users\\Alice\\original-private-name.png",
+            "gpu_uuid": physical_gpu_uuid,
+            "diagnostics": r"failed at C:\\Users\\Alice\\private-run",
+            "standalone_path": r"C:\\Users\\Alice\\Secrets\\api-key.txt",
+            "path_object": tmp_path / "private-path.txt",
+        },
+        allow_fallback=True,
+    )
+
+    input_path = next((gateway.scratch.root / "input").glob("*.json"))
+    written = json.loads(input_path.read_text(encoding="utf-8"))
+    encoded = json.dumps(written, ensure_ascii=False)
+    assert physical_gpu_uuid not in encoded
+    assert "base_model" not in written
+    assert "BASE_MODEL" not in written
+    assert "Original_Path" not in written
+    assert written["gpu_uuid"] == "gpu-1"
+    assert written["diagnostics"] == "failed at <local-path>"
+    assert written["standalone_path"] == "<local-path>"
+    assert written["path_object"] == "<local-path>"
+
+
 def test_codex_arguments_require_read_only_ephemeral_structured_exec(tmp_path: Path) -> None:
     call = ScratchRepository(tmp_path / "runtime").prepare_call(
         call_id="call-2",
@@ -163,8 +195,29 @@ def test_codex_arguments_require_read_only_ephemeral_structured_exec(tmp_path: P
 
     assert arguments[:2] == ["codex", "exec"]
     assert "--model" not in arguments
-    assert "--config" not in arguments
+    config_values = {
+        arguments[index + 1] for index, value in enumerate(arguments[:-1]) if value == "--config"
+    }
+    assert config_values == {
+        "mcp_servers.blender.enabled=false",
+        "mcp_servers.node_repl.enabled=false",
+        "mcp_servers.unityMCP.enabled=false",
+    }
     assert "--ephemeral" in arguments
+    disabled_features = {
+        arguments[index + 1] for index, value in enumerate(arguments[:-1]) if value == "--disable"
+    }
+    assert disabled_features == {
+        "apps",
+        "browser_use",
+        "browser_use_external",
+        "browser_use_full_cdp_access",
+        "computer_use",
+        "multi_agent",
+        "multi_agent_v2",
+        "plugins",
+        "shell_tool",
+    }
     sandbox_index = arguments.index("--sandbox")
     assert arguments[sandbox_index + 1] == "read-only"
     assert "--json" in arguments
@@ -182,6 +235,14 @@ def test_codex_arguments_attach_each_image_without_shell_string(tmp_path: Path) 
     assert isinstance(arguments, list)
     assert attached == [str(path) for path in call.image_paths]
     assert len(attached) == 2
+    config_values = {
+        arguments[index + 1] for index, value in enumerate(arguments[:-1]) if value == "--config"
+    }
+    assert config_values == {
+        "mcp_servers.blender.enabled=false",
+        "mcp_servers.node_repl.enabled=false",
+        "mcp_servers.unityMCP.enabled=false",
+    }
 
 
 def test_scratch_rejects_image_outside_dedicated_root(tmp_path: Path) -> None:

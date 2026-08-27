@@ -150,18 +150,18 @@ def test_project_names_reject_ascii_control_characters(
         )
 
 
-@pytest.mark.parametrize("token", ["", "a,b", "a\nb", "a;b", "a  b"])
+@pytest.mark.parametrize("token", ["a,b", "a\nb", "a;b", "a  b"])
 def test_trigger_token_rejects_ambiguous_caption_values(tmp_path: Path, token: str) -> None:
     with pytest.raises(ValidationError):
         make_config(tmp_path, trigger_token=token)
 
 
-def test_legacy_project_config_defaults_to_manual_trigger_and_auto_refinement(
+def test_project_config_defaults_to_user_value_or_codex_trigger_policy(
     tmp_path: Path,
 ) -> None:
-    config = make_config(tmp_path)
+    config = make_config(tmp_path, trigger_token="")
 
-    assert config.trigger_word_mode is TriggerWordMode.MANUAL
+    assert config.trigger_word_mode is TriggerWordMode.CODEX_SUGGEST
     assert config.codex_refinement_mode is CodexRefinementMode.AUTO
 
 
@@ -455,5 +455,5 @@ def test_codex_artifact_store_redacts_absolute_paths_from_audit(tmp_path: Path) 
     with database.session() as session:
         audit = session.get(CodexCallRow, "call-1").audit_json  # type: ignore[union-attr]
     assert local_path not in str(audit)
-    assert audit["local_path"] == "image.jpg"
+    assert audit["local_path"] == "<local-path>"
     assert "<local-path>" in audit["diagnostic"]
