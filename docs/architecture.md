@@ -43,7 +43,7 @@ completion.json
 
 ## Pipeline and recovery
 
-順序はimport、normalize、analyze、deduplicate、tag、caption、dataset review、plan、Codex pretrain review、preflight、train、three-pass sampling、evaluation、Codex final review、select、package、readyです。
+順序はimport、normalize、analyze、deduplicate、tag、triggerなしcaption draft、Codex refinement、必要時の`AWAITING_REVIEW`、caption確定、dataset review、plan、Codex pretrain review、preflight、train、three-pass sampling、evaluation、Codex final review、select、package、readyです。
 
 各stageはversion、input fingerprint、backend version、status、outputを永続化します。同じfingerprintで完成済みのstageは再利用でき、RUNNINGのまま終了したprocessは起動時にrecoverable stateへ戻します。cancelはcooperative tokenから外部processのterminate/killへ伝播し、resume可能なoptimizer stateとcheckpointを保持します。
 
@@ -78,12 +78,18 @@ Training Plannerはdataset/GPUから暫定planを作った後、学習開始前�
 
 ## Runtime Codex boundary
 
-Runtime Codexはsource repositoryやraw pathを受け取りません。dedicated scratch Git repositoryへsanitized JSON、schema、promptだけを配置し、`codex exec --ephemeral --sandbox read-only --json --output-schema ...`をargument arrayで起動します。outputをPydantic schemaで再検証し、変更提案はallowlist内だけを適用します。timeout/invalid output/auth failure時はpolicyに応じて明示warning付きdeterministic fallbackへ移ります。
+実行環境の判定、Routerからisolated profileへの切替、stdout pipe詰まり対策、起動/無通信/総時間timeoutの状態機械は[Codex CLI実行環境非依存タイムアウト設計](codex-runtime-design.md)で定義します。全試行の時間予算を共有し、設定されたMCPとoptional toolを呼び出し単位で無効化します。
 
-静的schemaはRuntimeのPydantic response modelから生成したものと完全一致させます。Codex Structured Outputsのsubsetに合わせ、rootをobject、全fieldをrequired、全objectを`additionalProperties: false`とし、`default`と表示用`title`は除去します。Dataset、Caption、Training、Recovery、Finalの5 schemaをparity testで監視します。要件は[OpenAI Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs)を参照してください。
+Runtime CodexのDataset refinementは、dedicated scratch Git repositoryへsanitized JSON、schema、promptを配置し、採用asset全件のmetadata-freeな縮小JPEGを安定順で最大8枚ずつ`codex exec --ephemeral --sandbox read-only --json --output-schema ... --image ...`へ渡します。Raw/original画像、元ファイル名、raw/project path、GPU UUID、認証情報、学習権限は渡しません。JPEGは各呼び出し後に削除し、packageへ含めません。進捗eventはpath-freeな`codex_image_progress`と`codex_batch_progress`としてApplication ServiceからGUI workerへ渡します。AUTOではbatchごとに上限付き再試行を行い、timeout・schema・mappingの失敗を検証済みのsource tagへ戻すdeterministic fallbackで吸収します。factory-acceptedな提案だけを自動採用し、それ以外はimmutableなdraftへ戻します。明示的REVIEW、意味tagを満たせないcaption、画像準備不能はTraining前に`AWAITING_REVIEW`またはrecoverable failureとして停止します。Dataset以外のCodex reviewは既存のpolicyに従い、許可時はdeterministic fallbackを維持します。全採用assetの構造化payloadは128 KiB未満にchunk化し、元WD14 tag/confidence、triggerなしdraft、既知warningだけを渡します。outputをPydantic schemaで再検証し、Codexは入力tagの削除・canonicalization・重複除去・並べ替えに加え、画像から直接確認できる不足tagをpin済みWD14語彙から追加できます。未知語彙、禁止category、区切り文字、重複、上限超過などの無効な追加tagは個別に拒否し、同じassetの検証済み変更は保持します。WD14元結果は上書きせず、Factory検証済み`effective_tags`だけを派生captionへ使います。画像入力は[Codex CLI reference](https://developers.openai.com/codex/cli/reference/)の`--image`に従います。
+
+静的schemaはRuntimeのPydantic response modelから生成したものと完全一致させます。Codex Structured Outputsのsubsetに合わせ、rootをobject、全fieldをrequired、全objectを`additionalProperties: false`とし、`default`と表示用`title`は除去します。Dataset Refinement、Dataset、Caption、Training、Recovery、Finalの6 schemaをparity testで監視します。要件は[OpenAI Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs)を参照してください。
+
+Trigger Wordはユーザー入力を最優先し、入力済みならCodex候補で上書きしません。空欄の場合は検証・正規化したCodex候補の先頭を自動採用し、AUTOで候補がない場合は安定したローカルトークンを生成します。明示的REVIEWで候補を確定できない場合だけ`AWAITING_REVIEW`へ移り、Trainingを開始しません。
+
+確認待ちは例外ではなくdurableな`RunStatus.AWAITING_REVIEW`です。Codex process、worker、GPU lease、trainer、optimizer state、checkpointを残さずにreturnし、run directoryのPydantic review/approval JSONと上流fingerprintを使って同じrunを再開します。Trigger Wordだけを変えた場合、taggingとCodex refinementは元snapshot設定でcache hitし、caption確定以降だけが新しいTrigger Wordを含むfingerprintになります。
 
 ## Packaging and distribution
 
-final publicationはLoRA名へ正規化したsafetensors、最大3つのalternatives、preview、comparison、README、resolved config、evaluation、training info、reproducibility manifestを含みます。Stable Diffusion install先へのcopyは既存名を上書きせずversioningし、copy後SHA-256を検証します。
+final publicationはLoRA名へ正規化したsafetensors、最大3つのalternatives、preview、comparison、README、resolved config、evaluation、training info、reproducibility manifestを含みます。reproducibility manifestはCodex画像profile、件数、安定順hash、batch input hash、cleanup statusを含めますが、scratch JPEG、絶対path、元ファイル名は含めません。Stable Diffusion install先へのcopyは既存名を上書きせずversioningし、copy後SHA-256を検証します。
 
-Windows GUIはPyInstaller one-dirで配布します。巨大なmanaged runtimeは同梱せず、`%LOCALAPPDATA%\LoRAFactory\`へ別途構築します。manifest、runtime lock、preset、Codex schema、外部managed processが読むWD14/CLIP helperは物理data fileとしてone-dirへ含めます。WD14とCLIPのmodel重みは含めず、hash検証付きSetupでmanaged runtimeへinstallします。build時にCPythonとbundled Python distributionsのlicense/noticeを隣接`licenses/`へexportします。これによりGUI更新とbackend互換性profileを独立して管理できます。
+Windows GUIはPyInstaller one-dirで配布します。CPythonとQtを同梱し、公開ZIPではWindows側のMicrosoft Visual C++ランタイムを使用します。巨大なmanaged runtime（PyTorch/sd-scripts/WD14/CLIP）と補助ツール（pin済みuv/git）は同梱せず、初回にアプリフォルダー内`runtime\`と`tools\`へhash検証付きで取得します。設定、キャッシュ、`Project`、生成物はすべてアプリフォルダー内に置き、`%LOCALAPPDATA%`などのユーザー領域を使いません。manifest、runtime lock、preset、Codex schema、外部managed processが読むWD14/CLIP helperは物理data fileとしてone-dirへ含めます。WD14とCLIPのmodel重みは含めず、hash検証付きSetupでmanaged runtimeへinstallします。build時にCPythonとbundled Python distributionsのlicense/noticeを隣接`licenses/`へexportします。これによりGUI更新とbackend互換性profileを独立して管理できます。

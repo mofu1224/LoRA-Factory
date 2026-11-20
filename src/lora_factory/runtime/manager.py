@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import os
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from lora_factory.runtime.toolchain import resolve_git
 from lora_factory.runtime.validation_record import RuntimeValidationRecord
+from lora_factory.util.app_paths import same_location
 from lora_factory.util.json import write_json_atomic
 
 
@@ -70,23 +71,49 @@ class RuntimeManager:
 
     def installed(self) -> bool:
         layout = self.layout
-        return (
+        if not (
             layout.python.is_file()
             and layout.sd_scripts.is_dir()
             and layout.installation_record.is_file()
             and (layout.wd14 / "model.onnx").is_file()
             and (layout.image_embedding / "config.json").is_file()
             and (layout.image_embedding / "model.safetensors").is_file()
-        )
+        ):
+            return False
+        return not self.relocated_from_previous_location()
+
+    def relocated_from_previous_location(self) -> bool:
+        """Report whether an installed runtime no longer lives where it was built.
+
+        The managed virtual environment records absolute interpreter paths, so a
+        copied or renamed application folder keeps every file yet cannot run the
+        environment.  Detecting the mismatch lets Setup rebuild it safely instead
+        of trusting a broken environment.
+        """
+
+        record = self.layout.installation_record
+        if not record.is_file():
+            return False
+        try:
+            payload = json.loads(record.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return True
+        if not isinstance(payload, dict):
+            return True
+        recorded = payload.get("layout_root")
+        if not isinstance(recorded, str) or not recorded:
+            return True
+        return not same_location(Path(recorded), self.layout.root)
 
     def installed_commit(self) -> str | None:
         if not (self.layout.sd_scripts / ".git").is_dir():
             return None
-        git_executable = shutil.which("git")
+        git_executable = resolve_git()
         if git_executable is None:
             return None
+        safe_directory = str(self.layout.sd_scripts.resolve(strict=False))
         completed = subprocess.run(  # noqa: S603 - executable resolved; fixed read-only query.
-            [git_executable, "rev-parse", "HEAD"],
+            [str(git_executable), "-c", f"safe.directory={safe_directory}", "rev-parse", "HEAD"],
             cwd=self.layout.sd_scripts,
             shell=False,
             capture_output=True,

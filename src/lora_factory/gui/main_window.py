@@ -45,6 +45,7 @@ class MainWindow(QMainWindow):
         self._action_thread: QThread | None = None
         self._action_worker: ApplicationActionWorker | None = None
         self._active_config: ProjectConfig | None = None
+        self._pending_refinement_project_id = ""
         self._recent_values: list[dict[str, Any]] = []
         self.setWindowTitle("LoRA Factory")
         self.resize(1240, 820)
@@ -132,7 +133,9 @@ class MainWindow(QMainWindow):
     def _connect_actions(self) -> None:
         self.new_project_button.clicked.connect(self._new_project)
         self.recent_button.clicked.connect(self.refresh_recent_projects)
-        self.running_button.clicked.connect(lambda: self._filter_recent({"active", "running"}))
+        self.running_button.clicked.connect(
+            lambda: self._filter_recent({"active", "running", "awaiting_review"})
+        )
         self.completed_button.clicked.connect(lambda: self._filter_recent({"completed", "ready"}))
         self.failed_button.clicked.connect(
             lambda: self._filter_recent(
@@ -158,11 +161,13 @@ class MainWindow(QMainWindow):
             lambda: self.pages.setCurrentWidget(self.project_editor)
         )
         self.project_editor.start_requested.connect(self.start_pipeline)
+        self.project_editor.resume_requested.connect(self.resume_pipeline)
         self.project_editor.project_creation_requested.connect(self.create_project_structure)
         self.project_editor.dataset_review_requested.connect(
             lambda: self.pages.setCurrentWidget(self.dataset_review)
         )
         self.dataset_review.override_requested.connect(self._save_dataset_override)
+        self.dataset_review.refinement_approval_requested.connect(self._submit_refinement_approval)
         self.progress_view.cancel_requested.connect(self.cancel_pipeline)
         self.progress_view.resume_requested.connect(self.resume_pipeline)
         self.completion_view.promote_requested.connect(self.promote_alternative)
@@ -189,7 +194,36 @@ class MainWindow(QMainWindow):
             )
         if initial:
             target = self.project_editor if self.setup_view.ready else self.setup_view
-            self.pages.setCurrentWidget(target)
+            auto_resumed = False
+            if self.setup_view.ready:
+                recent = next(
+                    (
+                        value
+                        for value in self._recent_values
+                        if str(value.get("status", "")).casefold()
+                        in {
+                            "cancelled",
+                            "canceled",
+                            "failed",
+                            "failed_recoverable",
+                            "awaiting_review",
+                            "created",
+                            "draft",
+                        }
+                    ),
+                    None,
+                )
+                if recent is not None:
+                    self.project_editor.load_project(recent)
+                    if str(recent.get("status", "")).casefold() == "awaiting_review":
+                        project_id = str(recent.get("project_id", ""))
+                        if self._can_auto_resume_waiting_run(recent):
+                            self.resume_pipeline(project_id)
+                            auto_resumed = True
+                        else:
+                            self._load_refinement_review(project_id)
+            if not auto_resumed:
+                self.pages.setCurrentWidget(target)
 
     def _load_destinations(self) -> None:
         settings = getattr(self.controller, "settings", None)
@@ -266,6 +300,7 @@ class MainWindow(QMainWindow):
     def resume_pipeline(self, project_id: str) -> None:
         if self._thread is not None or not project_id:
             return
+        self.project_editor.set_busy(True)
         self._active_config = None
         self.dataset_review.project_id = project_id
         self.dataset_review.set_run_locked(True)
@@ -422,15 +457,51 @@ class MainWindow(QMainWindow):
         self.completion_view.action_succeeded(f"Copied safely to {target}.")
 
     def _on_pipeline_event(self, raw: object) -> None:
-        self.progress_view.apply_event(raw)
         event = PipelineUpdate.from_value(raw)
+        self.progress_view.apply_event(self._progress_event_for_view(event))
         dataset_items = event.details.get("dataset_items", event.details.get("items"))
         if isinstance(dataset_items, Sequence) and not isinstance(dataset_items, (str, bytes)):
             self.dataset_review.set_items(dataset_items)
 
+    @staticmethod
+    def _progress_event_for_view(event: PipelineUpdate) -> dict[str, object]:
+        """Keep path-free Runtime Codex progress readable at the GUI boundary."""
+
+        details = dict(event.details)
+        message = event.message
+        event_type = event.event_type.casefold()
+        if event_type == "codex_image_progress":
+            current = details.get("images_current", details.get("image_index"))
+            total = details.get("images_total", details.get("image_count"))
+            action = str(details.get("action", "preparing")).casefold()
+            if isinstance(current, int) and isinstance(total, int) and total > 0:
+                verb = "Preparing" if action == "preparing" else "Prepared"
+                message = f"{verb} Codex images {current}/{total}"
+        elif event_type == "codex_batch_progress":
+            batch_index = details.get("batch_index")
+            batch_count = details.get("batch_count")
+            if isinstance(batch_index, int) and isinstance(batch_count, int) and batch_count > 0:
+                action = str(details.get("action", "call")).casefold()
+                prefix = "Reused Codex result" if action == "cache_hit" else "Codex image batch"
+                message = f"{prefix} {batch_index + 1}/{batch_count}"
+        return {
+            "event_type": event.event_type,
+            "message": message,
+            "stage": event.stage,
+            "overall_progress": event.overall_progress,
+            "stage_progress": event.stage_progress,
+            "details": details,
+        }
+
     def _on_pipeline_completed(self, raw: object) -> None:
         data = as_mapping(raw)
         status = str(data.get("status", "completed")).casefold()
+        if status == "awaiting_review":
+            project_id = str(data.get("project_id", self.dataset_review.project_id))
+            self.progress_view.mark_completed()
+            self.statusBar().showMessage("Training is waiting for Trigger Word or review approval.")
+            self._load_refinement_review(project_id)
+            return
         if status in {"cancelled", "canceled", "failed_recoverable"}:
             self.progress_view.mark_cancelled(
                 str(data.get("message", "Pipeline stopped safely and can be resumed."))
@@ -509,6 +580,57 @@ class MainWindow(QMainWindow):
                 f"Could not save dataset override: {type(error).__name__}: {error}"
             )
 
+    def _load_refinement_review(self, project_id: str) -> None:
+        method = getattr(self.controller, "refinement_review", None)
+        if not callable(method):
+            self.statusBar().showMessage("Application Services did not provide refinement review.")
+            return
+        self.dataset_review.project_id = project_id
+        self._launch_action(
+            lambda: method(project_id),
+            self._refinement_review_loaded,
+            self._refinement_review_load_failed,
+        )
+
+    def _refinement_review_loaded(self, raw: object) -> None:
+        data = as_mapping(raw)
+        data.setdefault("project_id", self.dataset_review.project_id)
+        self.dataset_review.set_run_locked(False)
+        self.dataset_review.set_refinement_review(data)
+        self.pages.setCurrentWidget(self.dataset_review)
+
+    def _refinement_review_load_failed(self, message: str) -> None:
+        self.statusBar().showMessage(f"Could not load refinement review: {message}")
+
+    def _submit_refinement_approval(self, approval: Mapping[str, Any]) -> None:
+        method = getattr(self.controller, "submit_refinement_review", None)
+        if not callable(method):
+            self.dataset_review.refinement_error.setText(
+                "Application Services did not provide refinement approval."
+            )
+            return
+        project_id = self.dataset_review.project_id
+        self._pending_refinement_project_id = project_id
+        self._launch_action(
+            lambda: method(project_id, dict(approval)),
+            self._refinement_approval_saved,
+            self._refinement_approval_failed,
+        )
+
+    def _refinement_approval_saved(self, _result: object) -> None:
+        project_id = self._pending_refinement_project_id
+        self._pending_refinement_project_id = ""
+        self.statusBar().showMessage("Approval saved. Resuming the same run.")
+        self.resume_pipeline(project_id)
+
+    def _refinement_approval_failed(self, message: str) -> None:
+        self._pending_refinement_project_id = ""
+        self.dataset_review._update_refinement_validity()
+        if self.dataset_review.approve_refinement_button.isEnabled():
+            self.dataset_review.refinement_error.setText(
+                f"Could not save refinement approval: {message}"
+            )
+
     def _filter_recent(self, statuses: set[str]) -> None:
         filtered = [
             item
@@ -556,9 +678,35 @@ class MainWindow(QMainWindow):
                 status not in {"active", "running", "failed_fatal"}
             )
             self.pages.setCurrentWidget(self.progress_view)
+        elif status == "awaiting_review":
+            self.project_editor.load_project(value)
+            if self._can_auto_resume_waiting_run(value):
+                self.resume_pipeline(project_id)
+            else:
+                self._load_refinement_review(project_id)
         else:
             self.project_editor.load_project(value)
             self.pages.setCurrentWidget(self.project_editor)
+
+    @staticmethod
+    def _can_auto_resume_waiting_run(value: Mapping[str, Any]) -> bool:
+        """Resume an old AUTO run on open; keep explicit REVIEW and unsafe QA manual."""
+
+        if not str(value.get("project_id", value.get("id", ""))).strip():
+            return False
+        if not str(value.get("run_id", "")).strip():
+            return False
+        if str(value.get("codex_refinement_mode", "auto")).casefold() != "auto":
+            return False
+        allow_without_codex = value.get("allow_without_codex", True)
+        if isinstance(allow_without_codex, str):
+            allow_without_codex = allow_without_codex.casefold() in {
+                "1",
+                "true",
+                "yes",
+                "on",
+            }
+        return bool(allow_without_codex)
 
     @staticmethod
     def _nav_button(text: str, object_name: str) -> QPushButton:

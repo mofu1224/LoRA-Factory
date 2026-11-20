@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -7,6 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from lora_factory.application.service import LoRAFactoryController
+from lora_factory.codex.image_attachment import PreparedCodexImage
 from lora_factory.codex.schemas import CodexTaskType
 from lora_factory.config.models import AppSettings, BackendMode, PresetKind, ProjectConfig
 from lora_factory.core.cancellation import CancellationToken
@@ -136,10 +139,19 @@ def test_archaudit_application_oom_recovery_uses_fresh_attempt_and_advisory_code
         context: Any,
         task: CodexTaskType,
         payload: dict[str, Any],
+        *,
+        images: Sequence[PreparedCodexImage] = (),
+        allow_fallback: bool | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any], str | None]:
         if task is CodexTaskType.RECOVERY:
             recovery_payloads.append(payload)
-        return original_review(context, task, payload)
+        return original_review(
+            context,
+            task,
+            payload,
+            images=images,
+            allow_fallback=allow_fallback,
+        )
 
     controller._codex_review = capture_review  # type: ignore[method-assign]
     config = ProjectConfig(
@@ -188,6 +200,10 @@ def test_archaudit_application_oom_recovery_uses_fresh_attempt_and_advisory_code
     assert recovery_payloads[0]["command_argv"] == []
     assert recovery_payloads[0]["dependency_versions"]["training_backend"] == backend.version
     assert recovery_payloads[0]["resolved_config"]["preset"] == PresetKind.CHARACTER.value
+    assert "training_gpu_uuid" not in recovery_payloads[0]["current_plan"]
+    assert "selected_gpus" not in recovery_payloads[0]
+    assert recovery_payloads[0]["selected_gpu_summary"]["count"] == 1
+    assert GPU_UUID not in json.dumps(recovery_payloads[0], ensure_ascii=False)
     assert [(item.attempt, item.status) for item in attempts] == [
         (1, "failed_recoverable"),
         (2, "completed"),

@@ -10,10 +10,12 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from lora_factory.codex.environment import build_codex_environment
+from lora_factory.codex.runtime import CodexRuntimeAdapter
 from lora_factory.config.models import AppSettings, DestinationConfig, DestinationKind
 from lora_factory.gpu.discovery import discover_nvidia_gpus
 from lora_factory.gpu.models import GpuDevice
 from lora_factory.runtime.manager import RuntimeManager
+from lora_factory.runtime.toolchain import resolve_git, resolve_uv
 from lora_factory.runtime.validation_record import (
     RuntimeValidationRecord,
     ValidationStatus,
@@ -149,13 +151,25 @@ def build_setup_checks(
             sys.version.split()[0],
         )
     ]
-    for name, command in (("uv", "uv"), ("Git", "git")):
-        found = which(command)
+    for name, resolver, label in (
+        ("uv", resolve_uv, "uv"),
+        ("Git", resolve_git, "Git"),
+    ):
+        found = resolver()
         checks.append(
-            _check(name, "ok" if found else "error", found or f"{command} was not found on PATH")
+            _check(
+                name,
+                "ok" if found else "needs setup",
+                str(found) if found else f"{label} will be provisioned during setup",
+                repairable=found is None,
+            )
         )
 
     codex = which("codex")
+    if codex is None and which is shutil.which:
+        # The packaged CLI may be installed outside PATH (for example under
+        # LocalAppData on Windows); use the same bounded resolver as Gateway.
+        codex = CodexRuntimeAdapter().resolve_executable()
     codex_required = settings.codex_required
     checks.append(
         _check(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from enum import StrEnum
 from statistics import mean
 from typing import Annotated
@@ -41,6 +41,20 @@ class CaptionAuditSummary(BaseModel):
     class_token_consistency: Annotated[float, Field(ge=0, le=1)] = 1.0
     invariant_tags: tuple[str, ...] = Field(default_factory=tuple)
     issues: tuple[CaptionQaIssue, ...] = Field(default_factory=tuple)
+
+
+_SEMANTIC_EXCLUDED_CATEGORIES = frozenset(
+    {
+        OntologyCategory.QUALITY,
+        OntologyCategory.RATING,
+        OntologyCategory.RESOLUTION,
+        OntologyCategory.TEXT_WATERMARK,
+    }
+)
+
+
+def has_semantic_tag(tags: Iterable[str], *, ontology: TagOntology = DEFAULT_ONTOLOGY) -> bool:
+    return any(ontology.classify(tag) not in _SEMANTIC_EXCLUDED_CATEGORIES for tag in tags)
 
 
 def audit_captions(
@@ -140,16 +154,7 @@ def audit_captions(
         clothing_images += any(
             ontology.classify(tag) is OntologyCategory.CLOTHING for tag in canonical
         )
-        semantic_images += any(
-            ontology.classify(tag)
-            not in {
-                OntologyCategory.QUALITY,
-                OntologyCategory.RATING,
-                OntologyCategory.RESOLUTION,
-                OntologyCategory.TEXT_WATERMARK,
-            }
-            for tag in canonical
-        )
+        semantic_images += has_semantic_tag(canonical, ontology=ontology)
         if expected_class is None or (len(tags) > 1 and tags[1] == expected_class):
             class_consistent += 1
         elif expected_class is not None:

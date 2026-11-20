@@ -1,6 +1,6 @@
 # Microsoft Visual C++ runtime notice
 
-The public v0.1 Windows ZIP is built with `SystemVcRuntime` mode. It does not
+The public Windows ZIP is built with `SystemVcRuntime` mode. It does not
 redistribute the standard system Microsoft Visual C++ runtime DLLs. Package-private
 native dependencies from scientific Python wheels may still be present when required
 by those wheels. Run the bundled

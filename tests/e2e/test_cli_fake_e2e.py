@@ -80,6 +80,21 @@ def test_cli_fake_e2e_uses_the_application_pipeline(
     )
     assert manifest["batch_probe"]["result"]["selected_batch_size"] == 1
     assert manifest["batch_probe"]["result"]["training_artifacts_created"] is False
+    codex_images = manifest["codex_refinement"]
+    assert codex_images["codex_image_profile"]["max_edge"] == 2048
+    assert codex_images["codex_image_count"] == manifest["dataset_statistics"]["accepted_count"]
+    assert len(codex_images["ordered_image_hashes"]) == codex_images["codex_image_count"]
+    assert len(codex_images["batch_input_hashes"]) == 3
+    assert codex_images["cleanup_status"] == "removed_after_each_call"
+    serialized_manifest = report.reproducibility_manifest.read_text(encoding="utf-8")
+    assert ".jpg" not in serialized_manifest.casefold()
+    assert "c:/" not in serialized_manifest.casefold()
+    assert "\\\\" not in serialized_manifest
+    assert "users/" not in serialized_manifest.casefold()
+    assert "home/" not in serialized_manifest.casefold()
+    assert "raw/" not in serialized_manifest.casefold()
+    assert "project/" not in serialized_manifest.casefold()
+    assert "日本語.png" not in serialized_manifest
 
 
 def test_cli_fake_e2e_records_and_uses_a_two_gpu_pool(tmp_path: Path) -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from lora_factory.dataset.clustering import MAX_PAIRWISE_COMPARISONS
 from lora_factory.dataset.embedding_review import (
     analyze_dataset_embeddings,
     combine_duplicate_cluster_ids,
@@ -46,6 +47,18 @@ def test_dataset_embedding_review_does_not_flag_moderate_variation_as_outlier() 
 def test_dataset_embedding_review_rejects_misaligned_matrix() -> None:
     with pytest.raises(ValueError, match="align"):
         analyze_dataset_embeddings(("a", "b"), np.ones((1, 3), dtype=np.float32))
+
+
+def test_dataset_embedding_review_rejects_unbounded_pairwise_work() -> None:
+    item_count = next(
+        count for count in range(1, 100_000) if count * (count - 1) // 2 > MAX_PAIRWISE_COMPARISONS
+    )
+
+    with pytest.raises(ValueError, match="pairwise safety limit"):
+        analyze_dataset_embeddings(
+            tuple(f"asset-{index}" for index in range(item_count)),
+            np.ones((item_count, 1), dtype=np.float32),
+        )
 
 
 def test_duplicate_cluster_merge_connects_phash_and_embedding_relationships() -> None:

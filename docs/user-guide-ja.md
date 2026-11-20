@@ -2,7 +2,9 @@
 
 ## 1. 起動
 
-GitHub ReleasesのWindows ZIPを使う場合は、ZIPとSHA-256 fileをdownloadしてhashを確認し、展開後の`LoRA Factory.exe`を起動します。先に[Codex CLI公式ドキュメント](https://learn.chatgpt.com/docs/codex/cli)に従ってCLIをinstallし、PowerShellで`codex`を実行して`Sign in with ChatGPT`を選びます。
+GitHub ReleasesのWindows ZIPを使う場合は、ZIPとSHA-256 fileをdownloadしてhashを確認し、展開後の`LoRA Factory.exe`を起動します。初回起動時にpin留めした固定版の`uv`と`git`をアプリフォルダー内`tools\`へ取得し、SHA-256を検証してから使用します。PATH上の`uv`や`git`は不要です。Microsoft Visual C++ランタイム（x64）が未導入なら、起動前に同梱の`install_vcredist.cmd`を実行してください。設定、モデルキャッシュ、学習環境、生成物はすべてアプリフォルダー内に保存されます。
+
+Codexは任意機能です。利用する場合だけ[Codex CLI公式ドキュメント](https://learn.chatgpt.com/docs/codex/cli)に従ってCLIをinstallし、PowerShellで`codex`を実行して`Sign in with ChatGPT`を選びます。未導入でも他の機能は動作します。
 
 source checkoutから起動する場合だけ、初回にPowerShellで次を実行します。
 
@@ -20,9 +22,11 @@ source checkoutから起動する場合だけ、初回にPowerShellで次を実�
 
 ## 2. Setup
 
-Setup画面でPython 3.12、uv、Git、Codex CLIの認証、NVIDIA driver/NVML/GPU、managed training runtime、PyTorch、ONNX CUDA、sd-scripts、任意の出力先を確認します。Real Backendを初めて使う場合は「Managed Training Runtime」の`Repair`を押してください。runtimeのinstallと選択可能GPU上のdeep probeはbackgroundで実行され、GUIは固まりません。runtimeにはPyTorch、ONNX Runtime、pin済みsd-scripts、WD14 modelが入り、15 GiB以上の空き容量を見込んでください。
+Setup画面でPython 3.12、アプリが`tools\`へ導入するuvとGit、任意のCodex CLIの認証、NVIDIA driver/NVML/GPU、managed training runtime、PyTorch、ONNX CUDA、sd-scripts、任意の出力先を確認します。Real Backendを初めて使う場合は「Managed Training Runtime」の`Repair`を押してください。runtimeのinstallと選択可能GPU上のdeep probeはbackgroundで実行され、GUIは固まりません。runtimeにはPyTorch、ONNX Runtime、pin済みsd-scripts、WD14 modelが入り、15 GiB以上の空き容量を見込んでください。managed runtimeはアプリフォルダー内`runtime\`に導入されます。
 
 Runtime Codexは、認証済みCodex CLIの既定モデルを使用します。特定モデルを固定しないため、アカウントで利用可能なCodex CLI設定に追従します。
+
+初期CLIとCodexRouterは自動判定されます。呼び出しごとに起動・無通信・総時間を制限し、Routerの起動失敗時だけisolated profileへ切り替えます。設定済みMCPとoptional toolは無効化され、画像付き呼び出しでも同じ安全境界を維持します。設計の詳細は[Codex CLI実行環境非依存タイムアウト設計](codex-runtime-design.md)を参照してください。
 
 Setupが未完了でもFake Backendによる動作確認はできます。Fakeは学習用途の代替modelではなく、workflowの再現試験用です。managed runtimeにはCLIP画像embedding modelも含まれ、WD14と合わせて大きなbatchでGPUメモリが足りない場合は自動的にbatchを半減して再試行します。
 
@@ -32,11 +36,12 @@ Project Editorで以下を指定します。
 
 1. LoRA Name: 最終safetensorsの名前。Windowsで使えない記号は入力できません。名前を入力して`Add Project`を押すと、`Project\<名前>\`へ`input-Image`、`output-model`、`base-model`を含む必要なdirectory、`project.yaml`、dataset manifest、SQLiteを作成します。この時点では学習は始まりません。
 2. Preset: 人物・characterの同一性を学ぶ場合はCharacter、絵柄を学ぶ場合はStyle。
-3. Trigger Token: 自分で決める呼び出し語。captionの先頭へ固定されます。
-4. Base Model: SDXL / Illustrious互換`.safetensors`。headerを安全に検査します。
-5. Images / Folders: fileを複数選択するかfolderを選択。日本語、空白、Unicodeの名前を扱えます。
-6. GPU Pool: 使用を許可するGPU UUIDだけをcheck。選択していないGPUは使いません。
-7. Output: 完成folderの親directory。
+3. Caption / Tag refinement: 安全なCodex提案を自動適用する`AUTO`か、学習前に全画像の差分を確認する`REVIEW`かを選びます。Runtime Codex refinementを実行すると、採用された全画像のmetadataを除いた最大辺2048 pxの縮小コピーが、最大8枚ずつOpenAIへ送られます。Rawや元画像、元ファイル名、プロジェクトpathは送られず、一時JPEGは各呼び出し後に削除されます。AUTOでは各batchを上限付きで再試行し、timeout・未インストール・不正な構造化応答を検証済みの元caption/tagへ戻して自動継続します。安全な提案だけを採用し、他は元captionへ戻します。明示的REVIEW、意味tagを満たせない入力、画像を安全に準備できない入力だけがTraining前に確認待ちまたは復旧可能な停止になります。Dataset以外のCodex reviewは既存のフォールバック方針を維持します。画像入力の`--image`は[Codex CLI reference](https://developers.openai.com/codex/cli/reference/)を参照してください。
+4. Trigger Word: 任意です。入力した値はユーザー指定として保持し、空欄ならRuntime Codexの検証済み候補を先頭から採用します。候補が得られないAUTOでは安定したローカルトークンを自動生成するため、手入力待ちになりません。`1girl`など一般的なDanbooru tagと衝突する値は使用できません。確定値は全captionの先頭、sampling、metadata、成果物へ同じ値で反映されます。
+5. Base Model: SDXL / Illustrious互換`.safetensors`。headerを安全に検査します。
+6. Images / Folders: fileを複数選択するかfolderを選択。日本語、空白、Unicodeの名前を扱えます。
+7. GPU Pool: 使用を許可するGPU UUIDだけをcheck。選択していないGPUは使いません。
+8. Output: 完成folderの親directory。
 
 開発版の`Project`はrepository直下、完成版は`LoRA Factory.exe`と同じdirectoryにあります。`Add Project`は同名projectに対して安全に再実行でき、既存fileを上書きしません。残りの項目を入力して`Create LoRA`を押すと、そのprojectへ設定を保存して学習を開始します。
 
@@ -55,6 +60,10 @@ defaultではcrop、upscale、flip、color augmentation、random cropはoffで�
 Review画面ではthumbnail、元file名、解像度、判定理由、raw tags、final caption、採用状態を確認します。低解像度、極端なaspect、blank、重複、watermark候補等には理由が表示されます。
 
 1枚に複数の意味がある場合は、`Accepted, Warning, Duplicate, Validation`のようにカテゴリを重ねて表示します。カテゴリfilterも重複して数えるため、WarningやDuplicateをValidationへ割り当てた場合でも見落としません。Validation割当はseed固定のTraining Plannerと同じsplitをDataset Review時点で計算し、後段で一致を再検証します。
+
+明示的REVIEW、またはAUTOで元captionへ戻しても意味tagを満たせないrunは、Training前に正常な`AWAITING_REVIEW`となります。元tag、検証済みの追加・削除tag、提案tag、triggerなしcaption下書き、提案caption、理由、confidenceを全採用画像について確認し、画像ごとに採用・却下・編集するか、一括採用します。未知tag、禁止tag、重複、上限超過、Trigger Word・class token・semantic coverageを満たさないcaptionは保存前に行単位で表示され、修正するまでContinueできません。「Approve and continue training」は検証済みの判断だけをatomic保存し、同じrunを再開します。アプリを閉じても確認状態は失われません。上流データが変わった場合は古い承認を拒否します。
+
+Trigger Wordを入力した場合は常にその値を使います。空欄＋AUTOでは検証済みCodex候補の先頭を採用し、候補がない場合も決定論的ローカルトークンで停止せず進みます。REVIEWでは全画像差分の承認を待ち、Codexが選んだTrigger Wordも編集できます。AUTOの保留runはGUI再起動時に同じrunを自動再開します。
 
 各行には、最終training resolutionと「upscaleしない」規則から求めた具体的なbucketも表示します。短辺が64 px未満へ丸められる極端なaspect比は`Unavailable (<64 px)`となり、例外でrun全体を止めません。
 
@@ -93,6 +102,7 @@ SettingsへA1111、Forge、ComfyUIのrootまたはLoRA folderを登録するとC
 - GPUが見つからない: NVIDIA driverと`nvidia-smi`を確認し、再起動後にSetupを再実行します。
 - runtimeがNOT READY: Setupの「Managed Training Runtime」で`Repair`を押し、PyTorch/ONNX/sd-scripts各行の具体的な結果を確認します。開発者向けの同等診断は`uv run lora-factory doctor --deep --strict`です。
 - disk不足: project outputとmanaged runtimeを合わせ、十分な空き容量があるdriveを選びます。
-- Codexが利用できない: fallback許可時はwarningとauditを残して決定論的reviewへ移ります。認証fileやAPI keyをprojectへcopyしません。
+- Codexが利用できない: AUTOのDataset画像refinementはtimeout・不正応答を元tagへ戻し、warningとauditを残して自動継続します。REVIEWまたは意味tagを満たせない入力は`AWAITING_REVIEW`で確認してください。Dataset以外のreviewはfallback許可時に決定論的reviewへ移ります。認証fileやAPI keyをprojectへcopyしません。
+- Codex候補が3件未満: AUTOでは候補がなくても安定したローカルトークンを自動生成して進みます。REVIEWでは正常な`AWAITING_REVIEW`で停止してTrigger Wordの手入力を求めます。入力を検証・保存した後、同じrunをResumeします。
 
 障害解析用CLIの詳細は[developer guide](developer-guide.md)にあります。

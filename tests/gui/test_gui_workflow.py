@@ -8,14 +8,20 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import pytest
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QApplication, QFileDialog, QLineEdit
+from PySide6.QtWidgets import QApplication, QFileDialog, QLabel, QLineEdit
 
-from lora_factory.config.models import ProjectConfig
+from lora_factory.config.models import (
+    CodexRefinementMode,
+    ProjectConfig,
+    TriggerWordMode,
+)
 from lora_factory.core.cancellation import CancelledError
 from lora_factory.core.exceptions import PipelineError
+from lora_factory.gui.dataset_review import DatasetReviewView
 from lora_factory.gui.main_window import MainWindow
-from lora_factory.gui.project_editor import AdvancedSettingsDialog
+from lora_factory.gui.project_editor import AdvancedSettingsDialog, ProjectEditor
 
 GPU_UUID = "GPU-11111111-1111-1111-1111-111111111111"
 GPU_UUID_BAD = "GPU-22222222-2222-2222-2222-222222222222"
@@ -43,6 +49,7 @@ class FakeController:
         self.promotions: list[tuple[str, str]] = []
         self.copies: list[tuple[str, str]] = []
         self.saved_destinations: list[Mapping[str, Any]] = []
+        self.submitted_refinements: list[tuple[str, Mapping[str, Any]]] = []
         self.created_projects: list[str] = []
         self.overrides: list[tuple[str, Mapping[str, Any]]] = []
         self.opened: list[str] = []
@@ -117,6 +124,30 @@ class FakeController:
         self.run_thread_id = threading.get_ident()
         self.configs.append(config)
         self.started.set()
+        emit(
+            {
+                "event_type": "codex_image_progress",
+                "stage": "CODEX_REFINEMENT",
+                "details": {
+                    "action": "preparing",
+                    "images_current": 8,
+                    "images_total": 17,
+                    "batch_index": 0,
+                    "batch_count": 3,
+                },
+            }
+        )
+        emit(
+            {
+                "event_type": "codex_batch_progress",
+                "stage": "CODEX_REFINEMENT",
+                "details": {
+                    "action": "call",
+                    "batch_index": 1,
+                    "batch_count": 3,
+                },
+            }
+        )
         emit(
             {
                 "event_type": "progress",
@@ -205,6 +236,48 @@ class FakeController:
     def set_dataset_override(self, project_id: str, override: Mapping[str, Any]) -> None:
         self.overrides.append((project_id, override))
 
+    def refinement_review(self, project_id: str) -> Mapping[str, Any]:
+        return {
+            "project_id": project_id,
+            "run_id": "waiting-run",
+            "upstream_fingerprint": "a" * 64,
+            "requires_refinement_review": True,
+            "requires_trigger_selection": True,
+            "preset": "character",
+            "class_token": "1girl",
+            "invariants": [],
+            "pinned_tag_vocabulary": ["smile", "blue_hair", "green_eyes", "best_quality"],
+            "max_effective_tags": 75,
+            "trigger_word": "",
+            "trigger_candidates": [
+                {"value": "lfx_nova", "reason": "Distinct candidate"},
+                {"value": "lfx_ember", "reason": "Distinct candidate"},
+                {"value": "lfx_quartz", "reason": "Distinct candidate"},
+            ],
+            "items": [
+                {
+                    "asset_id": "asset-1",
+                    "original_tags": ["smile", "blue_hair"],
+                    "baseline_tags": ["smile", "blue_hair"],
+                    "proposed_tags": ["smile"],
+                    "effective_tags": ["smile"],
+                    "draft_caption": "1girl, smile, blue hair",
+                    "proposed_caption": "lfx_nova, 1girl, smile",
+                    "reason": "Remove identity-bound appearance",
+                    "confidence": 0.9,
+                    "factory_accepted": True,
+                    "rejection_reason": None,
+                }
+            ],
+            "warnings": [],
+        }
+
+    def submit_refinement_review(
+        self, project_id: str, decision: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        self.submitted_refinements.append((project_id, decision))
+        return {"project_id": project_id, "run_id": "waiting-run", "approval_saved": True}
+
     def open_output_folder(self, project_id: str) -> None:
         self.opened.append(project_id)
 
@@ -256,6 +329,60 @@ class FatalRecentController(FakeController):
                 "status": "draft",
             },
         )
+
+
+class CancelledRecentController(FakeController):
+    def recent_projects(self) -> Sequence[Mapping[str, Any]]:
+        return (
+            {
+                "project_id": "cancelled-project",
+                "lora_name": "雨沐子",
+                "status": "cancelled",
+                "run_id": "saved-run",
+                "preset": "style",
+                "trigger_token": "雨沐子",
+                "base_model": "C:/models/base.safetensors",
+                "input_paths": ["C:/images"],
+                "selected_gpu_uuids": [GPU_UUID],
+                "output_root": "C:/outputs",
+                "backend_mode": "real",
+                "quality_mode": True,
+                "project_root": "C:/LoRA Factory/Project/cancelled-project",
+            },
+        )
+
+
+class AwaitingRecentController(CancelledRecentController):
+    def recent_projects(self) -> Sequence[Mapping[str, Any]]:
+        value = dict(super().recent_projects()[0])
+        value["status"] = "awaiting_review"
+        value["codex_refinement_mode"] = "review"
+        return (value,)
+
+
+class AutoAwaitingRecentController(CancelledRecentController):
+    def recent_projects(self) -> Sequence[Mapping[str, Any]]:
+        value = dict(super().recent_projects()[0])
+        value["status"] = "awaiting_review"
+        value["codex_refinement_mode"] = "auto"
+        value["allow_without_codex"] = True
+        return (value,)
+
+
+class AwaitingReviewController(FakeController):
+    def run_pipeline(
+        self, config: ProjectConfig, emit: Callable[[dict[str, Any]], None]
+    ) -> Mapping[str, Any]:
+        del emit
+        self.run_thread_id = threading.get_ident()
+        self.configs.append(config)
+        return {
+            "project_id": config.project_id,
+            "run_id": "waiting-run",
+            "status": "AWAITING_REVIEW",
+            "requires_refinement_review": True,
+            "requires_trigger_selection": True,
+        }
 
 
 def fill_valid_project(window: MainWindow, tmp_path: Path) -> None:
@@ -330,6 +457,63 @@ def test_fatal_recent_project_is_filtered_and_routed_without_resume(qtbot: Any) 
     assert window.pages.currentWidget() is window.progress_view
     assert window.progress_view.project_id == "fatal-project"
     assert not window.progress_view.resume_button.isEnabled()
+
+
+def test_initial_window_loads_cancelled_project_and_selected_gpu(qtbot: Any) -> None:
+    window = MainWindow(CancelledRecentController())
+    qtbot.addWidget(window)
+
+    assert window.pages.currentWidget() is window.project_editor
+    assert window.project_editor.lora_name.text() == "雨沐子"
+    assert window.project_editor.selected_gpu_uuids() == (GPU_UUID,)
+    assert window.project_editor.start_button.isEnabled()
+    assert window.project_editor.start_button.text() == "Resume saved run"
+
+
+def test_initial_window_loads_awaiting_review_and_safe_defaults(qtbot: Any) -> None:
+    window = MainWindow(AwaitingRecentController())
+    qtbot.addWidget(window)
+    window.show()
+
+    qtbot.waitUntil(
+        lambda: (
+            window.pages.currentWidget() is window.dataset_review
+            and window.dataset_review.refinement_controls.isVisible()
+        ),
+        timeout=3000,
+    )
+
+    assert window.project_editor.lora_name.text() == "雨沐子"
+    assert window.project_editor.start_button.text() == "Resume saved run"
+    assert window.dataset_review.approve_refinement_button.isEnabled()
+
+
+def test_initial_window_auto_resumes_awaiting_auto_run(qtbot: Any) -> None:
+    controller = AutoAwaitingRecentController()
+    window = MainWindow(controller)
+    qtbot.addWidget(window)
+    window.show()
+
+    with qtbot.waitSignal(window.pipeline_completed, timeout=3000):
+        qtbot.waitUntil(lambda: controller.resume_calls == ["cancelled-project"], timeout=3000)
+    qtbot.waitUntil(lambda: window._thread is None, timeout=3000)
+
+    assert controller.resume_calls == ["cancelled-project"]
+    assert window.pages.currentWidget() is window.completion_view
+
+
+def test_loaded_cancelled_project_resumes_instead_of_creating_a_new_run(qtbot: Any) -> None:
+    controller = CancelledRecentController()
+    window = MainWindow(controller)
+    qtbot.addWidget(window)
+    window.show()
+
+    with qtbot.waitSignal(window.pipeline_completed, timeout=3000):
+        qtbot.mouseClick(window.project_editor.start_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: window._thread is None, timeout=3000)
+
+    assert controller.resume_calls == ["cancelled-project"]
+    assert controller.configs == []
 
 
 def test_name_only_add_project_creates_structure_without_starting_pipeline(qtbot: Any) -> None:
@@ -583,3 +767,243 @@ def test_dataset_review_override_and_advanced_settings(qtbot: Any) -> None:
     assert values.network_dim == 32
     assert values.epochs == 8
     assert values.resolution == 896
+
+
+def test_new_project_defaults_to_user_value_or_codex_trigger_policy(qtbot: Any) -> None:
+    editor = ProjectEditor()
+    qtbot.addWidget(editor)
+
+    assert editor.trigger_word_mode.currentData() == TriggerWordMode.CODEX_SUGGEST
+    assert "otherwise let Codex choose" in editor.trigger_word_mode.currentText()
+    assert "Optional" in editor.trigger_token.placeholderText()
+
+    editor.trigger_word_mode.setCurrentIndex(
+        editor.trigger_word_mode.findData(TriggerWordMode.MANUAL)
+    )
+    editor.clear_form()
+
+    assert editor.trigger_word_mode.currentData() == TriggerWordMode.CODEX_SUGGEST
+
+
+def test_editor_persists_refinement_and_trigger_word_modes(qtbot: Any, tmp_path: Path) -> None:
+    window = MainWindow(FakeController())
+    qtbot.addWidget(window)
+    editor = window.project_editor
+    fill_valid_project(window, tmp_path)
+    editor.codex_refinement_mode.setCurrentIndex(
+        editor.codex_refinement_mode.findData(CodexRefinementMode.REVIEW)
+    )
+    editor.trigger_word_mode.setCurrentIndex(
+        editor.trigger_word_mode.findData(TriggerWordMode.CODEX_SUGGEST)
+    )
+    editor.trigger_token.clear()
+
+    with qtbot.waitSignal(editor.start_requested, timeout=1000) as emitted:
+        editor.validate_and_start()
+
+    config = emitted.args[0]
+    assert config.codex_refinement_mode is CodexRefinementMode.REVIEW
+    assert config.trigger_word_mode is TriggerWordMode.CODEX_SUGGEST
+    assert config.trigger_token == ""
+
+    editor.clear_form()
+    editor.load_project(config.model_dump(mode="python"))
+    assert editor.codex_refinement_mode.currentData() == CodexRefinementMode.REVIEW
+    assert editor.trigger_word_mode.currentData() == TriggerWordMode.CODEX_SUGGEST
+
+
+def test_project_editor_discloses_automatic_codex_image_upload(qtbot: Any) -> None:
+    editor = ProjectEditor()
+    qtbot.addWidget(editor)
+
+    notice = editor.findChild(QLabel, "codexImageUploadNotice")
+
+    assert notice is not None
+    assert "OpenAI" in notice.text()
+    assert "2048" in notice.text()
+
+
+def test_refinement_review_distinguishes_validated_added_and_removed_tags(qtbot: Any) -> None:
+    review = DatasetReviewView()
+    qtbot.addWidget(review)
+    payload = FakeController().refinement_review("review-project")
+    payload["items"][0]["effective_tags"] = ["smile", "green_eyes"]
+    payload["items"][0]["proposed_tags"] = ["smile", "unvalidated_tag"]
+    payload["items"][0]["added_tags"] = ["green_eyes"]
+    payload["items"][0]["removed_tags"] = ["blue_hair"]
+
+    review.set_refinement_review(payload)
+
+    text = review.table.item(0, review.CHANGE_COLUMN).text()
+    assert "+ green eyes" in text
+    assert "- blue hair" in text
+    assert "unvalidated" not in text
+
+
+def test_refinement_bulk_accept_uses_only_safe_factory_proposals(qtbot: Any) -> None:
+    payload = FakeController().refinement_review("review-project")
+    payload["class_token"] = None
+    payload["items"] = [
+        *payload["items"],
+        {
+            "asset_id": "unsafe-fallback",
+            "original_tags": ["smile"],
+            "baseline_tags": ["smile"],
+            "proposed_tags": ["smile"],
+            "effective_tags": ["smile"],
+            "draft_caption": "lfx_nova, smile",
+            "proposed_caption": "lfx_nova, smile",
+            "reason": "Factory fallback",
+            "confidence": 0.0,
+            "factory_accepted": False,
+            "rejection_reason": "keep decision changed effective tags",
+        },
+        {
+            "asset_id": "semantic-missing",
+            "original_tags": ["smile"],
+            "baseline_tags": ["smile"],
+            "proposed_tags": [],
+            "effective_tags": [],
+            "draft_caption": "lfx_nova, smile",
+            "proposed_caption": "lfx_nova",
+            "reason": "No semantic proposal",
+            "confidence": 0.0,
+            "factory_accepted": True,
+            "rejection_reason": None,
+        },
+    ]
+
+    review = DatasetReviewView()
+    qtbot.addWidget(review)
+    review.set_refinement_review(payload)
+    review._bulk_accept()
+
+    assert review._refinement_rows["asset-1"][0].currentData() == "accept"
+    assert review._refinement_rows["unsafe-fallback"][0].currentData() == "reject"
+    assert review._refinement_rows["semantic-missing"][0].currentData() == "reject"
+    assert review.approve_refinement_button.isEnabled()
+
+
+def test_pipeline_progress_renders_codex_image_preparation_and_batches(
+    qtbot: Any, tmp_path: Path
+) -> None:
+    window = MainWindow(FakeController(delay=0.2))
+    qtbot.addWidget(window)
+    window.show()
+    fill_valid_project(window, tmp_path)
+
+    qtbot.mouseClick(window.project_editor.start_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(
+        lambda: "Codex image batch 2/3" in window.progress_view.summary_log.toPlainText(),
+        timeout=3000,
+    )
+
+    progress = window.progress_view.summary_log.toPlainText()
+    assert "Preparing Codex images 8/17" in progress
+    assert "Codex image batch 2/3" in progress
+
+
+def test_awaiting_refinement_renders_diff_and_approval_resumes_same_project(
+    qtbot: Any, tmp_path: Path
+) -> None:
+    controller = AwaitingReviewController()
+    window = MainWindow(controller)
+    qtbot.addWidget(window)
+    window.show()
+    fill_valid_project(window, tmp_path)
+
+    qtbot.mouseClick(window.project_editor.start_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(
+        lambda: (
+            window.pages.currentWidget() is window.dataset_review
+            and window._thread is None
+            and window._action_thread is None
+        ),
+        timeout=3000,
+    )
+
+    review = window.dataset_review
+    assert review.refinement_controls.isVisible()
+    assert review.table.rowCount() == 1
+    assert review.table.item(0, 2).text() == "smile, blue_hair"
+    assert review.table.item(0, review.REASON_COLUMN).text() == "Remove identity-bound appearance"
+    assert review.trigger_word.text() == "lfx_nova"
+    assert review.approve_refinement_button.isEnabled()
+
+    with qtbot.waitSignal(window.pipeline_completed, timeout=3000):
+        qtbot.mouseClick(review.bulk_accept_button, Qt.MouseButton.LeftButton)
+        qtbot.mouseClick(review.approve_refinement_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: window._thread is None and window._action_thread is None, timeout=3000)
+
+    assert controller.submitted_refinements[0][0] == "Test LoRA"
+    submitted = controller.submitted_refinements[0][1]
+    assert submitted["trigger_word"] == "lfx_nova"
+    assert submitted["items"] == [{"asset_id": "asset-1", "decision": "accept"}]
+    assert controller.resume_calls == ["Test LoRA"]
+
+
+@pytest.mark.parametrize(
+    ("case", "value", "expected_error"),
+    [
+        ("tags", "smile, invented_tag", "invented_tag"),
+        ("tags", "smile, best_quality", "forbidden category"),
+        ("caption", "1girl, smile", "Trigger token must be the first"),
+        ("caption", "lfx_nova, smile", "Expected fixed class token"),
+        ("trigger", "1girl", "collides with common Danbooru tag"),
+    ],
+)
+def test_refinement_gui_disables_continue_for_invalid_user_edits(
+    qtbot: Any,
+    case: str,
+    value: str,
+    expected_error: str,
+) -> None:
+    review = DatasetReviewView()
+    qtbot.addWidget(review)
+    review.set_refinement_review(FakeController().refinement_review("review-project"))
+    decision, tags, caption = review._refinement_rows["asset-1"]
+    decision.setCurrentIndex(decision.findData("edit"))
+
+    if case == "tags":
+        tags.setText(value)
+    elif case == "trigger":
+        review.trigger_word.setText(value)
+    else:
+        caption.setText(value)
+
+    assert review.approve_refinement_button.isEnabled() is False
+    assert expected_error in review.refinement_error.text()
+
+
+def test_refinement_gui_requires_semantic_tag_and_allows_correction(qtbot: Any) -> None:
+    payload = FakeController().refinement_review("review-project")
+    payload["class_token"] = None
+    payload["items"][0]["baseline_tags"] = []
+    payload["items"][0]["proposed_tags"] = []
+    payload["items"][0]["effective_tags"] = []
+    payload["items"][0]["proposed_caption"] = "lfx_nova"
+
+    review = DatasetReviewView()
+    qtbot.addWidget(review)
+    review.set_refinement_review(payload)
+
+    assert review.approve_refinement_button.isEnabled() is False
+    assert "semantic tag" in review.refinement_error.text()
+
+    decision, tags, _caption = review._refinement_rows["asset-1"]
+    decision.setCurrentIndex(decision.findData("edit"))
+    tags.setText("smile")
+
+    assert review.approve_refinement_button.isEnabled() is True
+
+
+def test_refinement_approval_failure_keeps_valid_review_actionable(qtbot: Any) -> None:
+    window = MainWindow(FakeController())
+    qtbot.addWidget(window)
+    window.dataset_review.set_refinement_review(
+        FakeController().refinement_review("review-project")
+    )
+
+    window._refinement_approval_failed("ValueError: transient validation failure")
+
+    assert window.dataset_review.approve_refinement_button.isEnabled() is True

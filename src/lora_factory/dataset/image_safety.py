@@ -13,13 +13,16 @@ class ImageSafetyError(ValueError):
     """An image exceeds the public input-safety contract."""
 
 
+MAX_IMAGE_FILES = 2_000
+
+
 class ImageSafetyLimits(BaseModel):
     """Conservative limits that keep accidental or hostile inputs bounded."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     max_enumerated_entries: Annotated[int, Field(ge=1)] = 100_000
-    max_image_files: Annotated[int, Field(ge=1)] = 10_000
+    max_image_files: Annotated[int, Field(ge=1, le=MAX_IMAGE_FILES)] = MAX_IMAGE_FILES
     max_file_size_bytes: Annotated[int, Field(ge=1)] = 512 * 1024 * 1024
     max_total_size_bytes: Annotated[int, Field(ge=1)] = 50 * 1024 * 1024 * 1024
     max_dimension: Annotated[int, Field(ge=1)] = 32_768

@@ -32,9 +32,11 @@ from PySide6.QtWidgets import (
 from lora_factory.config.models import (
     AdvancedOverrides,
     BackendMode,
+    CodexRefinementMode,
     PresetKind,
     ProjectConfig,
     ProjectDraft,
+    TriggerWordMode,
 )
 from lora_factory.config.validation import trigger_token_collision_warning
 from lora_factory.gui.contracts import GpuView
@@ -184,6 +186,7 @@ class ProjectEditor(QWidget):
     """Collect the seven standard inputs and emit one validated ProjectConfig."""
 
     start_requested = Signal(object)
+    resume_requested = Signal(str)
     project_creation_requested = Signal(str)
     dataset_review_requested = Signal()
 
@@ -193,6 +196,8 @@ class ProjectEditor(QWidget):
         self._backend_mode = BackendMode.REAL
         self._gpu_checkboxes: dict[str, QCheckBox] = {}
         self._gpus: list[GpuView] = []
+        self._resume_existing = False
+        self._resume_project_id = ""
 
         outer = QVBoxLayout(self)
         header = QLabel("Create a LoRA")
@@ -242,16 +247,48 @@ class ProjectEditor(QWidget):
         self.preset.addItem("Style LoRA", PresetKind.STYLE)
         form.addRow("Preset *", self.preset)
 
+        self.codex_refinement_mode = QComboBox()
+        self.codex_refinement_mode.setObjectName("codexRefinementMode")
+        self.codex_refinement_mode.addItem(
+            "Apply safe changes automatically", CodexRefinementMode.AUTO
+        )
+        self.codex_refinement_mode.addItem(
+            "Review changes before training", CodexRefinementMode.REVIEW
+        )
+        form.addRow("Caption / Tag refinement", self.codex_refinement_mode)
+        self.codex_image_upload_notice = QLabel(
+            "Runtime Codex sends metadata-free, resized copies (maximum edge 2048 px) of "
+            "every accepted image to OpenAI in batches of up to 8. Originals and project "
+            "paths are not sent."
+        )
+        self.codex_image_upload_notice.setObjectName("codexImageUploadNotice")
+        self.codex_image_upload_notice.setWordWrap(True)
+        form.addRow("", self.codex_image_upload_notice)
+
+        self.trigger_word_mode = QComboBox()
+        self.trigger_word_mode.setObjectName("triggerWordMode")
+        self.trigger_word_mode.addItem("Enter manually", TriggerWordMode.MANUAL)
+        self.trigger_word_mode.addItem(
+            "Use entered value; otherwise let Codex choose",
+            TriggerWordMode.CODEX_SUGGEST,
+        )
+        self.trigger_word_mode.setCurrentIndex(
+            self.trigger_word_mode.findData(TriggerWordMode.CODEX_SUGGEST)
+        )
+        form.addRow("Trigger Word", self.trigger_word_mode)
+
         self.trigger_token = QLineEdit()
         self.trigger_token.setObjectName("triggerToken")
         self.trigger_token.setPlaceholderText("A unique token, without commas")
-        form.addRow("LoRA tag (trigger) *", self.trigger_token)
+        form.addRow("LoRA tag (trigger)", self.trigger_token)
         self.trigger_warning = QLabel()
         self.trigger_warning.setObjectName("triggerWarning")
         self.trigger_warning.setWordWrap(True)
-        self.trigger_warning.setStyleSheet("color: #8a4b08;")
+        self.trigger_warning.setStyleSheet("color: #b42318;")
         form.addRow("", self.trigger_warning)
         self.trigger_token.textChanged.connect(self._update_trigger_warning)
+        self.trigger_word_mode.currentIndexChanged.connect(self._update_trigger_mode)
+        self._update_trigger_mode()
 
         self.base_model = QLineEdit()
         self.base_model.setObjectName("baseModel")
@@ -355,6 +392,14 @@ class ProjectEditor(QWidget):
     def _update_trigger_warning(self, value: str) -> None:
         self.trigger_warning.setText(trigger_token_collision_warning(value) or "")
 
+    def _update_trigger_mode(self) -> None:
+        suggested = self.trigger_word_mode.currentData() == TriggerWordMode.CODEX_SUGGEST
+        self.trigger_token.setPlaceholderText(
+            "Optional: your value is kept; blank lets Codex choose"
+            if suggested
+            else "A unique token, without commas"
+        )
+
     def set_gpus(self, values: Iterable[object]) -> None:
         for checkbox in self._gpu_checkboxes.values():
             self.gpu_layout.removeWidget(checkbox)
@@ -427,6 +472,9 @@ class ProjectEditor(QWidget):
 
     def validate_and_start(self) -> None:
         self.validation_message.clear()
+        if self._resume_existing:
+            self.resume_requested.emit(self._resume_project_id or self.lora_name.text().strip())
+            return
         try:
             if not self.base_model.text().strip():
                 raise ValueError("Choose an SDXL or Illustrious base model.")
@@ -437,6 +485,8 @@ class ProjectEditor(QWidget):
                 lora_name=self.lora_name.text().strip(),
                 preset=self.preset.currentData(),
                 trigger_token=self.trigger_token.text(),
+                codex_refinement_mode=self.codex_refinement_mode.currentData(),
+                trigger_word_mode=self.trigger_word_mode.currentData(),
                 base_model=Path(self.base_model.text().strip()),
                 input_paths=self.input_paths(),
                 selected_gpu_uuids=self.selected_gpu_uuids(),
@@ -485,7 +535,9 @@ class ProjectEditor(QWidget):
     def set_busy(self, busy: bool) -> None:
         self.start_button.setEnabled(not busy)
         self.add_project_button.setEnabled(not busy)
-        self.start_button.setText("Starting…" if busy else "Create LoRA")
+        self.start_button.setText(
+            "Starting…" if busy else "Resume saved run" if self._resume_existing else "Create LoRA"
+        )
 
     def set_backend_mode(self, backend_mode: BackendMode) -> None:
         """Select the application backend without exposing a beginner-facing control."""
@@ -498,12 +550,28 @@ class ProjectEditor(QWidget):
                 return value.get(name, default)
             return getattr(value, name, default)
 
+        project_id = str(read("project_id", ""))
+        status = str(read("status", "")).casefold()
+        self._resume_project_id = project_id
+        self._resume_existing = bool(read("run_id", "")) and status in {
+            "cancelled",
+            "canceled",
+            "failed",
+            "failed_recoverable",
+            "awaiting_review",
+        }
         self.lora_name.setText(str(read("lora_name", read("name", ""))))
         preset = str(read("preset", "character"))
         index = self.preset.findData(
             PresetKind.STYLE if preset.casefold() == "style" else PresetKind.CHARACTER
         )
         self.preset.setCurrentIndex(max(index, 0))
+        refinement_mode = str(read("codex_refinement_mode", CodexRefinementMode.AUTO.value))
+        refinement_index = self.codex_refinement_mode.findData(CodexRefinementMode(refinement_mode))
+        self.codex_refinement_mode.setCurrentIndex(max(refinement_index, 0))
+        trigger_mode = str(read("trigger_word_mode", TriggerWordMode.CODEX_SUGGEST.value))
+        trigger_mode_index = self.trigger_word_mode.findData(TriggerWordMode(trigger_mode))
+        self.trigger_word_mode.setCurrentIndex(max(trigger_mode_index, 0))
         self.trigger_token.setText(str(read("trigger_token", "")))
         self.base_model.setText(str(read("base_model", "")))
         self.output_folder.setText(str(read("output_root", read("output_folder", ""))))
@@ -526,12 +594,19 @@ class ProjectEditor(QWidget):
         else:
             self.project_creation_status.clear()
         self.validation_message.clear()
+        self.start_button.setText("Resume saved run" if self._resume_existing else "Create LoRA")
 
     def clear_form(self) -> None:
         """Reset visible project inputs while preserving the configured backend policy."""
 
+        self._resume_existing = False
+        self._resume_project_id = ""
         self.lora_name.clear()
         self.preset.setCurrentIndex(0)
+        self.codex_refinement_mode.setCurrentIndex(0)
+        self.trigger_word_mode.setCurrentIndex(
+            self.trigger_word_mode.findData(TriggerWordMode.CODEX_SUGGEST)
+        )
         self.trigger_token.clear()
         self.base_model.clear()
         self.training_paths.clear()
@@ -542,6 +617,7 @@ class ProjectEditor(QWidget):
         self._advanced = AdvancedOverrides()
         self.project_creation_status.clear()
         self.validation_message.clear()
+        self.start_button.setText("Create LoRA")
 
     def _choose_base_model(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

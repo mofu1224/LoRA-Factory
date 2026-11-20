@@ -11,8 +11,11 @@ $uvCommand = Get-Command uv -ErrorAction SilentlyContinue
 if ($null -eq $uvCommand) {
     throw 'uv was not found on PATH.'
 }
+$projectPython = Join-Path $repoRoot '.venv\Scripts\python.exe'
 
-$env:UV_CACHE_DIR = Join-Path $repoRoot '.uv-cache\publication'
+if ([string]::IsNullOrWhiteSpace($env:UV_CACHE_DIR)) {
+    $env:UV_CACHE_DIR = Join-Path $repoRoot '.uv-cache\publication'
+}
 Push-Location $repoRoot
 try {
     & git diff --check
@@ -21,20 +24,23 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'uv lock --check failed.' }
     & $uvCommand.Source sync --frozen
     if ($LASTEXITCODE -ne 0) { throw 'uv sync --frozen failed.' }
-    & $uvCommand.Source run ruff format --check .
+    if (-not (Test-Path -LiteralPath $projectPython -PathType Leaf)) {
+        throw "The project-local Python was not created by uv sync: $projectPython"
+    }
+    & $projectPython -m ruff format --check .
     if ($LASTEXITCODE -ne 0) { throw 'Ruff format check failed.' }
-    & $uvCommand.Source run ruff check .
+    & $projectPython -m ruff check .
     if ($LASTEXITCODE -ne 0) { throw 'Ruff lint failed.' }
-    & $uvCommand.Source run mypy src
+    & $projectPython -m mypy src
     if ($LASTEXITCODE -ne 0) { throw 'mypy failed.' }
-    & $uvCommand.Source run pytest `
+    & $projectPython -m pytest `
         --basetemp .test-tmp\publication `
         --cov=lora_factory `
         --cov-branch `
         --cov-report=term
     if ($LASTEXITCODE -ne 0) { throw 'Test or coverage gate failed.' }
     if (-not $SkipFakeE2E) {
-        & $uvCommand.Source run --frozen lora-factory fake-e2e `
+        & $projectPython -m lora_factory.cli fake-e2e `
             --preset character `
             --image-count 8 `
             --json

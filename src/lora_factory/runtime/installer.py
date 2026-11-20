@@ -18,9 +18,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from lora_factory.core.cancellation import CancellationToken
 from lora_factory.runtime.manager import RuntimeManager
+from lora_factory.runtime.toolchain import ensure_toolchain
 from lora_factory.runtime.validation_record import RuntimeValidationRecord
 from lora_factory.util.hashing import sha256_file
 from lora_factory.util.json import write_json_atomic
+from lora_factory.util.portable_environment import child_environment
 
 InstallProgress = Callable[[str, float, str], None]
 _EXACT_REQUIREMENT = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]*==[^\s;]+$")
@@ -52,10 +54,10 @@ class ManagedRuntimeInstaller:
         self._check_disk(layout.root)
         layout.root.mkdir(parents=True, exist_ok=True)
         layout.models.mkdir(exist_ok=True)
-        uv_executable = shutil.which("uv")
-        git_executable = shutil.which("git")
-        if uv_executable is None or git_executable is None:
-            raise RuntimeError("Both uv and Git are required to install the managed runtime")
+        if self.manager.relocated_from_previous_location():
+            progress("python", 0.02, "Rebuilding the managed environment for this location")
+            self._reset_relocated_environment()
+        uv_executable, git_executable = self._ensure_toolchain(progress)
 
         cancellation.raise_if_cancelled()
         progress("python", 0.05, "Creating the isolated managed Python environment")
@@ -182,6 +184,7 @@ class ManagedRuntimeInstaller:
                 "profile_id": manifest["profile_id"],
                 "installed_at": datetime.now(UTC).isoformat(),
                 "manifest_path": str(self.manager.manifest_path),
+                "layout_root": str(layout.root),
                 "runtime_lock_sha256": manifest["runtime_lock"]["sha256"],
                 "sd_scripts_commit": expected_commit,
                 "python": str(layout.python),
@@ -196,6 +199,26 @@ class ManagedRuntimeInstaller:
             RuntimeValidationRecord.after_install(str(manifest["profile_id"]), str(layout.python))
         )
         progress("complete", 1.0, "Managed runtime installation completed")
+
+    def _ensure_toolchain(self, progress: InstallProgress) -> tuple[str, str]:
+        """Provision the pinned uv and Git tools inside the application folder."""
+
+        progress("toolchain", 0.02, "Preparing the pinned uv and Git tools")
+
+        def relay(stage: str, fraction: float, message: str) -> None:
+            progress(f"toolchain:{stage}", 0.02 + 0.03 * fraction, message)
+
+        uv_path, git_path = ensure_toolchain(relay)
+        return str(uv_path), str(git_path)
+
+    def _reset_relocated_environment(self) -> None:
+        """Drop the relocated virtual environment while keeping downloaded assets."""
+
+        layout = self.manager.layout
+        if layout.environment.exists():
+            shutil.rmtree(layout.environment, ignore_errors=True)
+        layout.installation_record.unlink(missing_ok=True)
+        layout.validation_record.unlink(missing_ok=True)
 
     def _verified_runtime_lock(self) -> Path:
         try:
@@ -266,6 +289,7 @@ class ManagedRuntimeInstaller:
             encoding="utf-8",
             errors="replace",
             check=False,
+            env=child_environment(),
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         if completed.returncode != 0:
@@ -377,7 +401,7 @@ class ManagedRuntimeInstaller:
         existing = temporary.stat().st_size if temporary.exists() else 0
         request = urllib.request.Request(  # noqa: S310 - scheme and host validated above.
             url,
-            headers={"User-Agent": "LoRAFactory/v0.1"},
+            headers={"User-Agent": "LoRAFactory/v0.3"},
         )
         if existing:
             request.add_header("Range", f"bytes={existing}-")

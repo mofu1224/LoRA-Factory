@@ -61,7 +61,7 @@ Studio redistributable terms; the LoRA Factory license does not replace those te
 The exact release-builder check and official links are in
 `licenses/Microsoft-Visual-Cpp/README.md`.
 
-The public v0.1 GitHub ZIP uses `SystemVcRuntime` mode and intentionally does not
+The public GitHub ZIP uses `SystemVcRuntime` mode and intentionally does not
 redistribute the standard system VC++ runtime DLLs. Package-private native dependencies
 shipped by scientific Python wheels remain when required by those packages. Users can run the bundled `install_vcredist.cmd`,
 which invokes WinGet for the official Microsoft Visual C++ x64 Redistributable (or its
@@ -96,7 +96,7 @@ Windows build; scientific wheels can carry additional component-specific terms.
 ## Separately installed managed backend
 
 The managed backend is not embedded in the GUI executable. It is installed into a
-versioned directory under `%LOCALAPPDATA%\LoRAFactory\` from the hash-verified manifest and
+versioned directory under the application folder (`runtime/`) from the hash-verified manifest and
 lock. A prebuilt managed runtime must not be redistributed without separately collecting
 and satisfying the licenses of every package in `runtime-lock.txt`.
 

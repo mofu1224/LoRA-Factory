@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# A deliberately conservative subset of common Danbooru tags.  A match is a
-# warning, never a validation error: users remain the source of truth for the
-# trigger token, while the beginner-facing UI can flag an obvious collision.
+# A deliberately conservative subset of common Danbooru tags that cannot be
+# used as Trigger Words because they would activate unrelated visual concepts.
 KNOWN_DANBOORU_TRIGGER_COLLISIONS = frozenset(
     {
         "1boy",
@@ -34,16 +33,26 @@ KNOWN_DANBOORU_TRIGGER_COLLISIONS = frozenset(
 )
 
 
-def trigger_token_collision_warning(token: str) -> str | None:
-    """Return a non-blocking warning for an obvious existing tag collision."""
+def validate_trigger_word_collision(token: str) -> None:
+    """Reject an obvious existing-tag collision at every Trigger Word boundary."""
 
     canonical = "_".join(token.strip().casefold().split())
     if canonical not in KNOWN_DANBOORU_TRIGGER_COLLISIONS:
-        return None
-    return (
-        f"Warning: {token.strip()!r} is also a common Danbooru tag. "
-        "You may keep it, but a more unique trigger usually reduces accidental activation."
+        return
+    raise ValueError(
+        f"Trigger Word {token.strip()!r} collides with common Danbooru tag {canonical!r}; "
+        "choose a unique token"
     )
+
+
+def trigger_token_collision_warning(token: str) -> str | None:
+    """Return the blocking collision message for immediate GUI feedback."""
+
+    try:
+        validate_trigger_word_collision(token)
+    except ValueError as exc:
+        return str(exc)
+    return None
 
 
 def ensure_descendant(path: Path, root: Path) -> Path:

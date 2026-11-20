@@ -73,7 +73,7 @@ uv run --frozen lora-factory install-runtime
 uv run --frozen lora-factory doctor --deep --strict
 ```
 
-default rootは`%LOCALAPPDATA%\LoRAFactory\runtimes`です。別driveを使う場合は両commandへ同じ`--runtime-root`を渡します。installerはHTTPSからpin済みartifactを取得し、size、SHA-256またはGit blob hashを検証します。partial WD14/CLIP downloadは`.partial`から再開します。`runtime-lock.txt`はmanifest記録のSHA-256と一致しなければinstall前に停止します。Torch/torchvision以外の57 packagesはexact lockをdependency resolutionなしで導入し、pinned sd-scriptsは`--no-deps --editable`で登録します。checkoutの`requirements.txt`を直接installせず、sd-scripts checkoutも変更しないでください。
+default rootはアプリフォルダー内の`runtime\`です（source checkoutではリポジトリ直下`runtime\`）。別driveを使う場合は両commandへ同じ`--runtime-root`を渡します。アプリはPATHに依存せず、pin済みの`uv`と`git`を初回にアプリフォルダー内`tools\`へ取得して使います。installerはHTTPSからpin済みartifactを取得し、size、SHA-256またはGit blob hashを検証します。partial WD14/CLIP downloadは`.partial`から再開します。`runtime-lock.txt`はmanifest記録のSHA-256と一致しなければinstall前に停止します。Torch/torchvision以外の57 packagesはexact lockをdependency resolutionなしで導入し、pinned sd-scriptsは`--no-deps --editable`で登録します。checkoutの`requirements.txt`を直接installせず、sd-scripts checkoutも変更しないでください。アプリフォルダーを移動した場合は、記録された`layout_root`と現在位置の不一致を検出し、RepairでPython環境のみを再構築します。
 
 ## Fake E2E
 

@@ -101,6 +101,23 @@ if ($SystemVcRuntime) {
     }
     Write-Host 'SystemVcRuntime mode: standard system VC++ runtime DLLs are omitted; install the official x64 VC++ Redistributable before launch.'
 }
+else {
+    $requiredAppLocalRuntime = @(
+        'VCRUNTIME140.dll'
+        'VCRUNTIME140_1.dll'
+        'MSVCP140.dll'
+    )
+    $presentNames = @($msvcRuntimeFiles | ForEach-Object { $_.Name })
+    $missingAppLocalRuntime = @($requiredAppLocalRuntime | Where-Object { $_ -notin $presentNames })
+    if ($missingAppLocalRuntime.Count -ne 0) {
+        throw "Portable build is missing the app-local Microsoft runtime DLLs: $($missingAppLocalRuntime -join ', ')"
+    }
+    if (-not (Get-ChildItem -LiteralPath $appDirectory -Recurse -File -Filter 'python312.dll' |
+        Select-Object -First 1)) {
+        throw 'Portable build is missing the bundled CPython runtime (python312.dll).'
+    }
+    Write-Host 'Portable mode: the Microsoft Visual C++ runtime ships inside the application folder; no separate VC++ Redistributable install is required.'
+}
 $lgplText = Join-Path $licenseDirectory 'Qt\LGPL-3.0-only.txt'
 $gplText = Join-Path $licenseDirectory 'Qt\GPL-3.0-only.txt'
 if (-not (Test-Path -LiteralPath $lgplText -PathType Leaf) -or

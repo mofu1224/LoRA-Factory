@@ -13,6 +13,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLineEdit, QPushButton
 from safetensors.numpy import save_file
 
+from lora_factory.application import service as application_service
 from lora_factory.application.service import LoRAFactoryController
 from lora_factory.config.models import AppSettings, BackendMode
 from lora_factory.gui.main_window import MainWindow
@@ -56,11 +57,13 @@ def test_real_controller_offscreen_cancel_resume_override_copy_promote(
     base_model = tmp_path / "tiny Illustrious SDXL.safetensors"
     _fake_sdxl(base_model)
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
-    data_root = tmp_path / "LoRAFactory"
+    app_root = tmp_path / "portable-app"
+    monkeypatch.setattr(application_service, "application_root", lambda: app_root)
+    data_root = app_root / "data"
     settings = AppSettings(
-        projects_root=data_root / "projects",
-        managed_runtime_root=data_root / "runtime",
-        codex_runtime_root=data_root / "codex",
+        projects_root=app_root / "Project",
+        managed_runtime_root=app_root / "runtime",
+        codex_runtime_root=data_root / "codex-scratch",
     )
     controller = LoRAFactoryController(settings)
     window = MainWindow(controller)

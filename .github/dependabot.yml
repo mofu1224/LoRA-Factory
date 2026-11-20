@@ -1,6 +1,8 @@
 version: 2
 updates:
-  - package-ecosystem: pip
+  # The separate GPU runtime-lock.txt follows the pinned sd-scripts checkout.
+  # Upgrade its dependencies together with that compatibility profile.
+  - package-ecosystem: uv
     directory: /
     schedule:
       interval: weekly

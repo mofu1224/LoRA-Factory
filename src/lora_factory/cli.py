@@ -39,6 +39,7 @@ from lora_factory.runtime.validation_record import RuntimeValidationRecord
 from lora_factory.testing.fixture_factory import generate_fake_fixture
 from lora_factory.util.hashing import sha256_file
 from lora_factory.util.json import read_json, write_json_atomic
+from lora_factory.util.portable_environment import configure_process_environment
 
 app = typer.Typer(
     name="lora-factory",
@@ -47,6 +48,13 @@ app = typer.Typer(
     pretty_exceptions_show_locals=False,
 )
 console = Console(stderr=True)
+
+
+@app.callback()
+def _configure_portable_environment() -> None:
+    """Redirect tool caches into the application folder for this process."""
+
+    configure_process_environment()
 
 
 class FakeE2EReport(BaseModel):

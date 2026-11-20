@@ -24,11 +24,16 @@ UNUSED_QT_MODULES = [
 
 
 def without_unused_qt_artifacts(toc):
-    """Remove native modules/plugins pulled by PySide6 hooks but not used here."""
+    """Remove native modules/plugins that are not part of this application."""
 
     def keep(entry):
         filename = Path(str(entry[0]).replace("\\", "/")).name.lower()
         if filename in {"qpdf.dll", "qtvirtualkeyboardplugin.dll"}:
+            return False
+        # Qt's Windows build resolves its unversioned ICU imports from the
+        # operating system. PyInstaller can otherwise collect Poppler's
+        # versioned ICU DLLs from the build host, which causes WinError 127.
+        if filename.startswith("icu") and filename.endswith(".dll"):
             return False
         return not (
             filename.startswith("qt6pdf")
@@ -72,7 +77,7 @@ a = Analysis(
     ],
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(ROOT / "packaging" / "qt_runtime_hook.py")],
     excludes=[
         "hypothesis",
         "mypy",

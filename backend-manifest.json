@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
-  "profile_id": "sdxl-windows-cu130-2026.08",
+  "profile_id": "sdxl-windows-cu130-2026.11",
   "factory_python": "3.12.13",
   "factory_python_license": "PSF-2.0",
   "managed_python": "3.12.13",
   "managed_python_license": "PSF-2.0",
   "runtime_lock": {
     "path": "runtime-lock.txt",
-    "sha256": "710baa17da9b875461ffbc198bff719ed9c13ab252336bcf329abc0fd338940d",
+    "sha256": "33c408f3802e916e603cf9ada6a40b8861d538190ac77d83fbc2197d62ac45f2",
     "platform": "win32",
     "python": "3.12.13",
     "package_count": 57,

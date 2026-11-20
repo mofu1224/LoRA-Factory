@@ -110,8 +110,9 @@ cookies*.txt
 .codex/
 .claude/
 .cursor/
-/.agent/*
-!/.agent/PLANS.md
+/.agent/
+/.superpowers/
+/.release-tmp/
 /.agents/
 .idea/
 .vscode/
@@ -275,6 +276,9 @@ logs/
 # Managed runtimes, downloaded sources and model caches
 /runtime/
 /runtimes/
+/tools/
+/cache/
+/python/
 /vendor/
 /[Mm]odels/
 /loras/
@@ -323,3 +327,6 @@ trained_*.index
 
 # Internal execution records contain local validation paths and hardware IDs
 /docs/execplans/
+/docs/superpowers/
+/docs/portable-checklist.md
+/HANDOFF.md

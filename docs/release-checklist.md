@@ -15,11 +15,12 @@
 1. Confirm CI passes on `main`.
 2. Run the Windows release workflow manually once and test the downloaded artifact on a clean Windows account.
 3. Verify the ZIP SHA-256, launch `LoRA Factory.exe`, run Setup, and complete a Fake Backend project.
-4. Create an annotated semantic-version tag such as `v0.1` and push that tag.
+4. Create an annotated semantic-version tag such as `v0.3-bata` and push that tag; mark beta tags as pre-releases.
 5. The release workflow builds and attaches the Windows ZIP and SHA-256 file.
-6. Confirm the public build was created with `-SystemVcRuntime` and contains no standard system VC++ runtime DLLs.
+6. Confirm the public build uses `-SystemVcRuntime`: verify the standard MSVC runtime DLLs are absent and the bundled CPython runtime is present.
 7. Confirm the exact Qt/PySide source archive and LGPL source-offer procedure recorded in `licenses/Qt/README.md` remain available.
-8. Confirm `install_vcredist.cmd` is in the ZIP and its no-WinGet fallback downloads and verifies the official Microsoft x64 Redistributable installer.
-9. Review release notes and verify all bundled licenses before marking the release public.
+8. Confirm `install_vcredist.cmd` is in the ZIP for machines missing the system x64 runtime. Its no-WinGet fallback downloads and verifies the official Microsoft x64 Redistributable installer.
+9. Confirm the pinned `uv`/`git` versions and SHA-256 in `src/lora_factory/runtime/toolchain.py` still resolve and match the official release assets.
+10. Review release notes and verify all bundled licenses before marking the release public.
 
 Real Backend validation additionally requires an authenticated Codex CLI, a compatible NVIDIA GPU, the managed runtime, a user-supplied compatible base model, and a non-private test dataset.

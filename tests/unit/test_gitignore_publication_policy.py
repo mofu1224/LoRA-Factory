@@ -36,6 +36,9 @@ def _is_ignored(path: str) -> bool:
         ".git-credentials",
         "private/vault.kdbx",
         ".agent/local.json",
+        ".agent/PLANS.md",
+        ".superpowers/sdd/session.md",
+        ".release-tmp/archive.zip",
         ".agents/cache.json",
         ".ipynb_checkpoints/notebook.ipynb",
         ".pytest_cache-audit/v/cache/nodeids",
@@ -66,7 +69,6 @@ def test_private_publication_artifacts_are_ignored(path: str) -> None:
     "path",
     [
         ".env.example",
-        ".agent/PLANS.md",
         "AGENTS.md",
         "backend-manifest.json",
         "runtime-lock.txt",
