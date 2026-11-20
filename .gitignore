@@ -330,3 +330,7 @@ trained_*.index
 /docs/superpowers/
 /docs/portable-checklist.md
 /HANDOFF.md
+
+# ブラウザーから書き出した認証状態・通信記録
+cookies.json
+*.har
