@@ -4,16 +4,16 @@ requires-python = "==3.12.*"
 
 [[package]]
 name = "alembic"
-version = "1.19.1"
+version = "1.20.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mako" },
     { name = "sqlalchemy" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/16/2b/e4153978368de59918115c9e01d3ebf58a558a7285efa7e960c383c4b59a/alembic-1.19.1.tar.gz", hash = "sha256:e0fca0518118c78acc493e31bcb5402f190057aaf6df8b5b95ce94c4789cf648", size = 2070816, upload-time = "2026-08-08T16:32:01.565Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/93/1c/00909e0fbebad2121d916fdcab044cae988146680e9ee4387ba25fef8747/alembic-1.20.1.tar.gz", hash = "sha256:83490def1f723413db5096591f7609ac52544805be93849170088ed04f5a2e0b", size = 2103576, upload-time = "2026-10-22T03:24:35.93Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/20/89/e62cc37b69ad357cc8ecd6e7367f5245f523d3cbb338a66197212bdf6749/alembic-1.19.1-py3-none-any.whl", hash = "sha256:b39018cb3d9413a19cbd54cf3c02ad33998641f0538eb77413a488a21c3e14be", size = 265946, upload-time = "2026-08-08T16:32:03.153Z" },
+    { url = "https://files.pythonhosted.org/packages/11/3c/8740f5b4e1bd57333e4f84265b9b6363da4f7cf70f5622dd1e2fde7a0bd5/alembic-1.20.1-py3-none-any.whl", hash = "sha256:9970712cfb81ea26c8658d378aaa5b8f6ff9146e5bb111d70497c164016cf598", size = 270355, upload-time = "2026-10-22T03:24:37.667Z" },
 ]
 
 [[package]]
@@ -1061,20 +1061,20 @@ wheels = [
 
 [[package]]
 name = "types-psutil"
-version = "7.2.2.20260518"
+version = "7.2.2.20261111"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/cb/f1/6901857281d4e8d792492e1495eef6f4f01318a3b6a066486d81000a4511/types_psutil-7.2.2.20260518.tar.gz", hash = "sha256:9f825f631463a5b4d26f19f63aebc9ec25f01140d655026f3ad8a67841f9b331", size = 26660, upload-time = "2026-05-18T06:05:09.389Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/30/9eb9f10b074aa0cb3456ad3469716169d0af6de58096719f31cb065aac68/types_psutil-7.2.2.20261111.tar.gz", hash = "sha256:d677119c44fb80cc9be41d8ac731f08bf89974bb1daa49b6688665a9d7224f42", size = 27439, upload-time = "2026-11-11T08:32:33.155Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/cd/eb/f726339668879819599c74c2e1f0cab760912a4159046942bdae2ad37bd6/types_psutil-7.2.2.20260518-py3-none-any.whl", hash = "sha256:6a3d697665754a60d7b5a41d5a2cff12b53f5e0676d77810cd28ba5e14cb4049", size = 32820, upload-time = "2026-05-18T06:05:08.321Z" },
+    { url = "https://files.pythonhosted.org/packages/c1/c2/6a9d0b3e4f55ad008891dda1f9316b077f28c22274c58869f8047f7d6b74/types_psutil-7.2.2.20261111-py3-none-any.whl", hash = "sha256:054f7b635fc908d3d27e49e8d274fbfed115a1a859f2edeae17519c0238286a1", size = 33394, upload-time = "2026-11-11T08:32:32.097Z" },
 ]
 
 [[package]]
 name = "types-pyyaml"
-version = "6.0.12.20260724"
+version = "6.0.12.20261113"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3f/6f/a28f44bcd56bebed42b028a2894c79853e2f5e6b5279e633cb3f287a05e7/types_pyyaml-6.0.12.20260724.tar.gz", hash = "sha256:3c1ce1bb73cd5ec02e90390c2b1f00e810d241d8825fd73ff359696839271b6b", size = 17893, upload-time = "2026-07-24T04:58:43.453Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/4d/8b/ba599d956693dbc98e170f32097128bdea0a17f9d42b0b490fa749c12b1a/types_pyyaml-6.0.12.20261113.tar.gz", hash = "sha256:0828be2580fd94151182364f4d0158e4de62fdbeeb8d4296f7f7d2b6c22bb640", size = 19017, upload-time = "2026-11-13T08:51:21.488Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/42/0337fefc615e20ee55d1c8f71b774a9b2b734a04669139c20753b27a2a3a/types_pyyaml-6.0.12.20260724-py3-none-any.whl", hash = "sha256:d57db930a4b2efbc57cf430ec8882765d246929432fa253092f383902329a453", size = 20312, upload-time = "2026-07-24T04:58:42.486Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/2e/36fc0941a40ef066dbc8abac41bbbefb41389f547c779aef832aea6b873d/types_pyyaml-6.0.12.20261113-py3-none-any.whl", hash = "sha256:3600749e613748afdc4327f0b17c3296cf880cdbc7335f320007abd9dd815f67", size = 21321, upload-time = "2026-11-13T08:51:20.417Z" },
 ]
 
 [[package]]
