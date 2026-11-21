@@ -334,3 +334,24 @@ trained_*.index
 # ブラウザーから書き出した認証状態・通信記録
 cookies.json
 *.har
+
+# --- 個人データ・秘密情報・作業記録の除外（共通） ---
+# 環境変数・認証情報
+id_rsa*
+id_ed25519*
+secrets.json
+token.json
+# ブラウザのセッション・ローカルDB
+*cookies*.txt
+*cookies*.json
+*cookies*.sqlite
+# エージェント・エディターのローカル設定
+.agent/
+# 作業記録・引き継ぎ（Obsidianで管理）
+HANDOFF*.md
+findings.md
+progress.md
+task_plan.md
+docs/superpowers/
+# OSの生成ファイル
+desktop.ini
